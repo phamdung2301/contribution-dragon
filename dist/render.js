@@ -152,7 +152,7 @@ function buildShow(cal, seed) {
                 burns.push({ col, row, x: cell.x, y: cell.y, level: day.level, t: t - (0.7 + len * 0.18) + 0.2 + (k - 1) * 0.24 });
             }
         }
-        const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.9));
+        const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.85)); // flame 0.5s + fade 0.35s
         push("hold", plan.origin, plan.origin, 0.5 + Math.max(0, lastEffectEnd - t), rot, flip);
         let wp = plan.origin;
         for (const stepTo of plan.walks) {
@@ -401,7 +401,6 @@ export function renderDragon(cal, theme, opts = {}) {
         if (!burnMap.has(key))
             burnMap.set(key, b); // lần đốt sớm nhất thắng
     }
-    const FADE = 0.9; // mỗi ô mòn màu trong 0.9s
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < 7; r++) {
             const day = cal.weeks[c][r];
@@ -410,16 +409,19 @@ export function renderDragon(cal, theme, opts = {}) {
             const burn = burnMap.get(`${c},${r}`);
             const T = show.total;
             const orig = day.level === 0 ? theme.empty : theme.levels[day.level - 1];
-            const iS = burn ? burn.t / T : 0;
-            const iE = burn ? Math.min(0.999, (burn.t + FADE) / T) : 0;
+            // state machine: INTACT → BURNING (flame icon 0.5s) → SCORCHED (than cháy)
+            const iS = burn ? burn.t / T : 0; // bốc cháy
+            const iM = burn ? Math.min(0.999, (burn.t + 0.5) / T) : 0; // lửa tắt
+            const iE = burn ? Math.min(0.999, (burn.t + 0.85) / T) : 0; // mòn màu xong
             if (day.level === 4) {
                 const glowFade = burn
-                    ? `<animate attributeName="opacity" values="0.16;0.16;0;0" keyTimes="0;${f(iS)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
+                    ? `<animate attributeName="opacity" values="0.16;0.16;0.1;0;0" keyTimes="0;${f(iS)};${f(iM)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
                     : "";
                 parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16">${glowFade}</rect>`);
             }
+            // giữ màu nguyên trong lúc lửa cháy trên ô, rồi mòn về SCORCHED
             const fillAnim = burn
-                ? `<animate attributeName="fill" values="${orig};${orig};${theme.empty};${theme.empty}" keyTimes="0;${f(iS)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
+                ? `<animate attributeName="fill" values="${orig};${orig};${orig};${theme.scorch};${theme.scorch}" keyTimes="0;${f(iS)};${f(iM)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
                 : "";
             parts.push(`<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${orig}">${fillAnim}</rect>`);
         }
@@ -431,16 +433,30 @@ export function renderDragon(cal, theme, opts = {}) {
     if (opts.showCount !== false) {
         parts.push(`<text x="${width - GEO.marginX}" y="${GEO.top - 9}" text-anchor="end" font-family="${FONT}" font-size="10" fill="${theme.label}">${total} contributions — last year</text>`);
     }
-    // ===== vòng ignition trắng ngắn khi lửa chạm ô (đánh dấu khoảnh khắc cháy) =====
+    // ===== BURNING phase: biểu tượng lửa cháy trên ô trong 0.5s =====
     const T = show.total;
     for (const b of show.burns) {
         const start = ((b.t % T) + T) % T;
-        const a = f(start / T);
-        const b2 = f(Math.min(0.999, (start + 0.07) / T));
-        const c2 = f(Math.min(0.999, (start + 0.3) / T));
-        parts.push(`<circle cx="${f(b.x)}" cy="${f(b.y)}" r="5" fill="none" stroke="${DRAGON.glow}" stroke-width="2" opacity="0">` +
-            `<animate attributeName="opacity" values="0;0;0.85;0;0" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/>` +
-            `<animate attributeName="r" values="4;4;9;12;4" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/></circle>`);
+        const kts = [0];
+        const ops = [0];
+        const scs = ["0.3 0.3"];
+        const steps = 5;
+        for (let i = 0; i <= steps; i++) {
+            const tt = start + (i / steps) * 0.5;
+            kts.push(f(Math.min(0.999, tt / T)));
+            ops.push(f(i === 0 ? 0.4 : (i % 2 === 1 ? 1 : 0.6)));
+            const sc = 0.55 + (i / steps) * 0.75 + (i % 2 === 1 ? 0.1 : 0);
+            scs.push(`${f(sc)} ${f(sc)}`);
+        }
+        kts.push(1);
+        ops.push(0);
+        scs.push("0.3 0.3");
+        parts.push(`<g transform="translate(${f(b.x)},${f(b.y)})" opacity="0">` +
+            `<animate attributeName="opacity" values="${ops.join(";")}" keyTimes="${kts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>` +
+            `<g><animateTransform attributeName="transform" type="scale" values="${scs.join(";")}" keyTimes="${kts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>` +
+            `<path d="M0 3.4 C -3.4 1.2 -2.2 -2.2 0 -4.4 C 1.1 -2.2 3.3 -1.1 2.9 1.1 C 2.6 2.6 1.1 3.4 0 3.4 Z" fill="#F97316"/>` +
+            `<path d="M0 3.4 C -1.3 2 -0.9 0.4 0 -0.9 C 0.9 0.2 1.5 1.1 1.1 2.2 C 0.9 2.8 0.4 3.4 0 3.4 Z" fill="#FDE68A"/>` +
+            `</g></g>`);
     }
     parts.push(dragonRiders(show));
     const pad = GEO.pitch * 2;
