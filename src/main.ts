@@ -5,9 +5,19 @@
  */
 import { renderToFile } from "./cli.js";
 
-const env = (k: string) =>
-  process.env[`INPUT_${k.replace(/ /g, "_").toUpperCase()}`] ??
-  process.env[`INPUT_${k.replace(/-/g, "_").toUpperCase()}`];
+/**
+ * Đọc input theo 3 lớp: DRAGON_* (env step — chính xác 100%),
+ * INPUT_* (chuẩn GitHub, giữ gạch), INPUT_* (gạch đổi gạch dây) —
+ * rồi fallback về dragon.svg.
+ */
+const env = (k: string): string | undefined => {
+  const K = k.replace(/-/g, "_").toUpperCase();
+  return (
+    process.env[`DRAGON_${K}`] ??
+    process.env[`INPUT_${k.replace(/ /g, "_").toUpperCase()}`] ??
+    process.env[`INPUT_${K}`]
+  );
+};
 
 const jobs: Promise<unknown>[] = [];
 const produced: string[] = [];

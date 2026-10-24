@@ -4,8 +4,17 @@
  * Output: files — danh sách file SVG đã render (ghi vào $GITHUB_OUTPUT).
  */
 import { renderToFile } from "./cli.js";
-const env = (k) => process.env[`INPUT_${k.replace(/ /g, "_").toUpperCase()}`] ??
-    process.env[`INPUT_${k.replace(/-/g, "_").toUpperCase()}`];
+/**
+ * Đọc input theo 3 lớp: DRAGON_* (env step — chính xác 100%),
+ * INPUT_* (chuẩn GitHub, giữ gạch), INPUT_* (gạch đổi gạch dây) —
+ * rồi fallback về dragon.svg.
+ */
+const env = (k) => {
+    const K = k.replace(/-/g, "_").toUpperCase();
+    return (process.env[`DRAGON_${K}`] ??
+        process.env[`INPUT_${k.replace(/ /g, "_").toUpperCase()}`] ??
+        process.env[`INPUT_${K}`]);
+};
 const jobs = [];
 const produced = [];
 const outDark = env("OUT_DARK");
