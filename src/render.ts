@@ -106,30 +106,44 @@ export function buildShow(cal: Calendar, seed: number): Show {
     const ol = Math.max(1, Math.hypot(ox, oy));
     const arrival: Pt = { x: origin.x + (ox / ol) * GEO.pitch * 1.4, y: origin.y + (oy / ol) * GEO.pitch * 1.4 };
 
-    // GLIDE: S-curve sweep qua 11–14 ô — trượt theo một hướng trôi (drift)
-    // với wobble vuông góc hình sin, kết thúc CHÍNH XÁC tại origin
+    // SWEEP-IN: vào từ biên gần arrival → quét VÒNG LỚN qua tâm bảng
+    // (2 cung bezier: entry → away → origin) → tổng 11–14 ô, dài hơn thân
+    // rồng (91px) nên chuỗi duỗi ra đẹp; kết thúc CHÍNH XÁC tại origin.
     const want = 11 + Math.floor(rnd() * 4);          // 11–14 điểm
-    const driftAng = Math.atan2(arrival.y - origin.y, arrival.x - origin.x) + (rnd() - 0.5) * 0.9;
-    const drift = { x: Math.cos(driftAng), y: Math.sin(driftAng) };
-    const perp = { x: -drift.y, y: drift.x };
     const clampIn = (pt: Pt) => ({
       x: Math.min(width - GEO.marginX + GEO.pitch * 0.5, Math.max(GEO.marginX - GEO.pitch * 0.5, pt.x)),
       y: Math.min(GEO.top + 6 * GEO.pitch + GEO.pitch * 0.5, Math.max(GEO.top - GEO.pitch * 0.5, pt.y)),
     });
-    const startRaw = {
-      x: origin.x - drift.x * want * GEO.pitch * 0.8,
-      y: origin.y - drift.y * want * GEO.pitch * 0.8,
+    const entryC = Math.max(0, Math.min(cols - 1, Math.round((arrival.x - GEO.marginX - GEO.cell / 2) / GEO.pitch)));
+    const entryR = Math.max(0, Math.min(6, Math.round((arrival.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
+    const entry = cellCenter(entryC, entryR);
+    const away = clampIn({
+      x: 2 * center.x - origin.x + (rnd() - 0.5) * GEO.pitch * 3,
+      y: 2 * center.y - origin.y + (rnd() - 0.5) * GEO.pitch * 3,
+    });
+    const bez = (p0: Pt, pc: Pt, p2: Pt, n: number): Pt[] => {
+      const out: Pt[] = [];
+      for (let i = 0; i <= n; i++) {
+        const k = i / n;
+        out.push(lerpPt(lerpPt(p0, pc, k), lerpPt(pc, p2, k), k));
+      }
+      return out;
     };
-    const start = clampIn(startRaw);
-    const wobbleSign = rnd() < 0.5 ? 1 : -1;
-    const trail: Pt[] = [{ ...start }];
-    for (let i = 1; i < want - 1; i++) {
-      const k = i / (want - 1);
-      const base = lerpPt(start, origin, k);
-      const wobble = Math.sin(k * Math.PI * 2.2) * GEO.pitch * 1.15 * wobbleSign;
-      trail.push(clampIn({ x: base.x + perp.x * wobble, y: base.y + perp.y * wobble }));
-    }
-    trail.push({ ...origin });
+    const d1 = { x: away.x - entry.x, y: away.y - entry.y };
+    const l1 = Math.max(1, Math.hypot(d1.x, d1.y));
+    const c1 = clampIn({
+      x: entry.x + d1.x / l1 * l1 * 0.5 + (-d1.y / l1) * GEO.pitch * (2 + rnd() * 2.5),
+      y: entry.y + d1.y / l1 * l1 * 0.5 + (d1.x / l1) * GEO.pitch * (2 + rnd() * 2.5),
+    });
+    const leg1 = bez(entry, c1, away, Math.ceil(want / 2));
+    const d2 = { x: origin.x - away.x, y: origin.y - away.y };
+    const l2 = Math.max(1, Math.hypot(d2.x, d2.y));
+    const c2 = clampIn({
+      x: away.x + d2.x / l2 * l2 * 0.5 + (-d2.y / l2) * GEO.pitch * (2 + rnd() * 2.5),
+      y: away.y + d2.y / l2 * l2 * 0.5 + (d2.x / l2) * GEO.pitch * (2 + rnd() * 2.5),
+    });
+    const leg2 = bez(away, c2, origin, Math.floor(want / 2));
+    const trail = [...leg1.slice(0, -1), ...leg2];    // nối 2 cung, away dùng 1 lần
 
     const order = [d0, ...shuffle(allDirs.filter(d => d !== d0), rnd)];
     const dirCount = 1 + Math.floor(rnd() * 4);   // xoay ngẫu nhiên 1–4 hướng
@@ -262,7 +276,10 @@ export function simulateChain(phases: Phase[], total: number, dt: number, spacin
     const seg: Pt[] = [{ ...leader[0] }];
     for (let i = 1; i <= n; i++) {
       const L = leader[i];
+      const Lprev = leader[i - 1];
+      const headMoved = Math.hypot(L.x - Lprev.x, L.y - Lprev.y) > 0.4;
       const c = seg[i - 1];
+      if (!headMoved) { seg.push({ ...c }); continue; }   // đầu đứng yên → thân GIỮ thế (không cuộn)
       const dx = c.x - L.x, dy = c.y - L.y;
       const len = Math.hypot(dx, dy);
       if (len < 0.001) { seg.push({ ...L }); continue; }
