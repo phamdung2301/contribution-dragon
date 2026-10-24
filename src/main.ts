@@ -5,7 +5,9 @@
  */
 import { renderToFile } from "./cli.js";
 
-const env = (k: string) => process.env[`INPUT_${k.replace(/-/g, "_").toUpperCase()}`] ?? undefined;
+const env = (k: string) =>
+  process.env[`INPUT_${k.replace(/ /g, "_").toUpperCase()}`] ??
+  process.env[`INPUT_${k.replace(/-/g, "_").toUpperCase()}`];
 
 const jobs: Promise<unknown>[] = [];
 const produced: string[] = [];

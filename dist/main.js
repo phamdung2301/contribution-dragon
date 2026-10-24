@@ -4,7 +4,8 @@
  * Output: files — danh sách file SVG đã render (ghi vào $GITHUB_OUTPUT).
  */
 import { renderToFile } from "./cli.js";
-const env = (k) => process.env[`INPUT_${k.replace(/-/g, "_").toUpperCase()}`] ?? undefined;
+const env = (k) => process.env[`INPUT_${k.replace(/ /g, "_").toUpperCase()}`] ??
+    process.env[`INPUT_${k.replace(/-/g, "_").toUpperCase()}`];
 const jobs = [];
 const produced = [];
 const outDark = env("OUT_DARK");
