@@ -453,7 +453,10 @@ function dragonRiders(show) {
       </path>
     </g>
   </g>`;
-    segs.push(rider(0, head));
+    // đầu = node xoay riêng: ROT full-360 đưa MŨI theo vector heading
+    // (di chuyển + hướng phun) — miệng luôn đúng hướng ngắm
+    segs.push(`<g><animateMotion ${segMotionAt(0, show)}/>` +
+        `<g transform="scale(${DRAGON.scale})">${OPACITY}<g>${ROT}${head}</g></g></g>`);
     return segs.join("");
 }
 function linEmit(kts, vals, fmt) {
