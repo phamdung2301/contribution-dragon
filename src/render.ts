@@ -83,17 +83,15 @@ function buildShow(cal: Calendar, seed: number): Show {
     return any_;
   })();
 
-  const SESSIONS = 2;
-  type Plan = { origin: Pt; arrival: Pt; dirs: { d: Pt; len: number; rot: number; flip: number }[]; walks: Pt[] };
+  const SESSIONS = 3;
+  type Plan = { glide: Pt[]; origin: Pt; arrival: Pt; dirs: { d: Pt; len: number; rot: number; flip: number }[]; walks: Pt[] };
   const plans: Plan[] = [];
   let cur: Pt = center;
 
   for (let s = 0; s < SESSIONS; s++) {
-    // ô sáng ngẫu nhiên (ưu tiên count cao, cách vị trí hiện tại ≥ 3 ô)
     const pool = shuffle(pool0.filter(b => dist(b.p, cur) > GEO.pitch * 3), rnd).slice(0, 10);
     const target = (pool[0] ?? pool0[s % pool0.length]).p;
 
-    // hướng phun: ô MŨI NẮM (origin = ô trước ô sáng) phải nằm trong bảng ±1 ô
     const allDirs = shuffle([{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }], rnd);
     const d0 = allDirs.find(d => {
       const o = { x: target.x - d.x * GEO.pitch, y: target.y - d.y * GEO.pitch };
@@ -102,17 +100,35 @@ function buildShow(cal: Calendar, seed: number): Show {
     }) ?? allDirs[0];
     const origin: Pt = { x: target.x - d0.x * GEO.pitch, y: target.y - d0.y * GEO.pitch };
 
-    // điểm hiện ra: NGOÀI boundary 1.4 ô
     const ox = origin.x - center.x, oy = origin.y - center.y;
     const ol = Math.max(1, Math.hypot(ox, oy));
     const arrival: Pt = { x: origin.x + (ox / ol) * GEO.pitch * 1.4, y: origin.y + (oy / ol) * GEO.pitch * 1.4 };
 
-    // 4 hướng xoay: bắt đầu từ hướng chọn rồi quay lần lượt
+    // GLIDE: trượt ngẫu nhiên qua 11–14 ô, kết thúc tại origin
+    const want = 11 + Math.floor(rnd() * 4);
+    const trail: Pt[] = [{ ...origin }];
+    let p = { ...origin };
+    let guard = 0;
+    while (trail.length < want && guard++ < 80) {
+      const dirs4 = shuffle([{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }], rnd);
+      const d = dirs4.find(d => {
+        const n = { x: p.x + d.x * GEO.pitch, y: p.y + d.y * GEO.pitch };
+        return inGrid(n) && !trail.some(t => t.x === n.x && t.y === n.y);
+      }) ?? dirs4.find(d => {
+        const n = { x: p.x + d.x * GEO.pitch, y: p.y + d.y * GEO.pitch };
+        const prev = trail[trail.length - 2];
+        return inGrid(n) && (!prev || !(n.x === prev.x && n.y === prev.y));
+      });
+      if (!d) break;
+      p = { x: p.x + d.x * GEO.pitch, y: p.y + d.y * GEO.pitch };
+      trail.push({ ...p });
+    }
+    trail.reverse();   // đầu = xa origin nhất, cuối = origin (mũi phun)
+
     const order = [d0, ...shuffle(allDirs.filter(d => d !== d0), rnd)];
     const dirCount = 1 + Math.floor(rnd() * 4);   // xoay ngẫu nhiên 1–4 hướng
     const dirs = order.slice(0, dirCount).map(d => ({ d, len: 1 + Math.floor(rnd() * 3), rot: rotFor(d), flip: flipFor(d) }));
 
-    // đi bộ ngẫu nhiên 2–4 bước (có thể ra ngoài boundary 1 ô)
     const walks: Pt[] = [];
     let wp = { ...origin };
     const nSteps = 2 + Math.floor(rnd() * 3);
@@ -126,7 +142,7 @@ function buildShow(cal: Calendar, seed: number): Show {
       walks.push(wp);
     }
 
-    plans.push({ origin, arrival, dirs, walks });
+    plans.push({ glide: trail, origin, arrival, dirs, walks });
     cur = walks[walks.length - 1] ?? origin;
   }
 
@@ -145,9 +161,8 @@ function buildShow(cal: Calendar, seed: number): Show {
     }
   };
 
-  let spinAngle = 0;
   plans.forEach((plan, si) => {
-    // grand entrance: ~55% lần hiện ra có xoay tròn 360° (hướng ngẫu nhiên)
+    let spinAngle = 0;
     const doSpin = rnd() < 0.55;
     const spinDur = doSpin ? 0.85 : 0.35;
     const spinStart = spinAngle;
@@ -155,26 +170,32 @@ function buildShow(cal: Calendar, seed: number): Show {
     phases.push({ t0: t, t1: t + spinDur, from: plan.arrival, to: plan.arrival, kind: "fadein", visible: true,
       rotEnd: rot, flipEnd: flip, spinEnd: spinAngle, spinning: doSpin });
     t += spinDur;
-    push("move", plan.arrival, plan.origin, Math.max(0.8, dist(plan.arrival, plan.origin) / 110), rot, flip);
+
+    // SLIDE qua 11–14 ô của glide
+    let prev = plan.arrival;
+    for (const g of plan.glide) {
+      push("move", prev, g, 0.3, rot, flip);
+      prev = g;
+    }
 
     for (const { d, len, rot: rEnd, flip: fEnd } of plan.dirs) {
       push("rotate", plan.origin, plan.origin, 0.14, rEnd, fEnd);
       push("spray", plan.origin, plan.origin, 0.7 + len * 0.18, rEnd, fEnd);
       phases[phases.length - 1].len = len;
-      // các ô sáng trong tầm lửa: bay màu tuần tự, gần origin trước
+      // ĐỐT TOÀN BỘ ĐƯỜNG LỬA (mọi ô trong tầm 1..len — ô có màu mòn về trống hoàn toàn)
       for (let k = 1; k <= len; k++) {
         const cell = { x: plan.origin.x + d.x * GEO.pitch * k, y: plan.origin.y + d.y * GEO.pitch * k };
         if (!inGrid(cell)) continue;
         const col = Math.round((cell.x - GEO.marginX - GEO.cell / 2) / GEO.pitch);
         const row = Math.round((cell.y - GEO.top - GEO.cell / 2) / GEO.pitch);
         const day = cal.weeks[col]?.[row];
-        if (!day || day.level === 0) continue;
+        if (!day) continue;
         burns.push({ col, row, x: cell.x, y: cell.y, level: day.level, t: t - (0.7 + len * 0.18) + 0.2 + (k - 1) * 0.24 });
       }
     }
 
-    const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.9));   // ô xa nhất mất màu xong
-    push("hold", plan.origin, plan.origin, 0.5 + Math.max(0, lastEffectEnd - t), rot, flip);   // +0.5s sau đó
+    const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.9));
+    push("hold", plan.origin, plan.origin, 0.5 + Math.max(0, lastEffectEnd - t), rot, flip);
     let wp = plan.origin;
     for (const stepTo of plan.walks) {
       const dx = stepTo.x - wp.x;
@@ -453,7 +474,7 @@ export function renderDragon(cal: Calendar, theme: Theme, opts: { showCount?: bo
           : "";
         parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16">${glowFade}</rect>`);
       }
-      const fillAnim = burn && day.level > 0
+      const fillAnim = burn
         ? `<animate attributeName="fill" values="${orig};${orig};${theme.empty};${theme.empty}" keyTimes="0;${f(iS)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
         : "";
       parts.push(
