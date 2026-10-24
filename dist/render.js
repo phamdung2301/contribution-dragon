@@ -58,11 +58,17 @@ export function buildShow(cal, seed) {
         const pool = shuffle(pool0.filter(b => dist(b.p, cur) > GEO.pitch * 3), rnd).slice(0, 10);
         const target = (pool[0] ?? pool0[s % pool0.length]).p;
         const allDirs = shuffle([{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }], rnd);
-        const d0 = allDirs.find(d => {
-            const o = { x: target.x - d.x * GEO.pitch, y: target.y - d.y * GEO.pitch };
-            return o.x >= GEO.marginX - GEO.pitch * 0.6 && o.x <= width - GEO.marginX + GEO.pitch * 0.6 &&
-                o.y >= GEO.top - GEO.pitch * 0.6 && o.y <= GEO.top + 6 * GEO.pitch + GEO.pitch * 0.6;
-        }) ?? allDirs[0];
+        // hướng phun: origin VÀ toàn tầm lửa 1–3 ô phải nằm trong bảng — nếu không
+        // lửa phun ra ngoài稀缺 và không ô nào cháy (bug "đốt nhưng không mất")
+        const sprayFits = (d) => {
+            for (let k = -1; k <= 3; k++) {
+                const q = { x: target.x + d.x * GEO.pitch * k, y: target.y + d.y * GEO.pitch * k };
+                if (!inGrid(q))
+                    return false;
+            }
+            return true;
+        };
+        const d0 = allDirs.find(sprayFits) ?? allDirs.find(d => inGrid({ x: target.x - d.x * GEO.pitch, y: target.y - d.y * GEO.pitch })) ?? allDirs[0];
         const origin = { x: target.x - d0.x * GEO.pitch, y: target.y - d0.y * GEO.pitch };
         const ox = origin.x - center.x, oy = origin.y - center.y;
         const ol = Math.max(1, Math.hypot(ox, oy));
@@ -78,9 +84,12 @@ export function buildShow(cal, seed) {
         const entryC = Math.max(0, Math.min(cols - 1, Math.round((arrival.x - GEO.marginX - GEO.cell / 2) / GEO.pitch)));
         const entryR = Math.max(0, Math.min(6, Math.round((arrival.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
         const entry = cellCenter(entryC, entryR);
+        // away: 4–6 ô về phía TÂM bảng (vòng săn gọn 10–14 ô, không traverse hết bảng)
+        const toC = { x: center.x - origin.x, y: center.y - origin.y };
+        const tcl = Math.max(1, Math.hypot(toC.x, toC.y));
         const away = clampIn({
-            x: 2 * center.x - origin.x + (rnd() - 0.5) * GEO.pitch * 3,
-            y: 2 * center.y - origin.y + (rnd() - 0.5) * GEO.pitch * 3,
+            x: origin.x + (toC.x / tcl) * GEO.pitch * (4 + rnd() * 2) + (-toC.y / tcl) * GEO.pitch * (rnd() - 0.5) * 3,
+            y: origin.y + (toC.y / tcl) * GEO.pitch * (4 + rnd() * 2) + (toC.x / tcl) * GEO.pitch * (rnd() - 0.5) * 3,
         });
         const bez = (p0, pc, p2, n) => {
             const out = [];
@@ -93,17 +102,18 @@ export function buildShow(cal, seed) {
         const d1 = { x: away.x - entry.x, y: away.y - entry.y };
         const l1 = Math.max(1, Math.hypot(d1.x, d1.y));
         const c1 = clampIn({
-            x: entry.x + d1.x / l1 * l1 * 0.5 + (-d1.y / l1) * GEO.pitch * (2 + rnd() * 2.5),
-            y: entry.y + d1.y / l1 * l1 * 0.5 + (d1.x / l1) * GEO.pitch * (2 + rnd() * 2.5),
+            x: entry.x + d1.x * 0.5 + (-d1.y / l1) * l1 * 0.3 * (0.4 + rnd()),
+            y: entry.y + d1.y * 0.5 + (d1.x / l1) * l1 * 0.3 * (0.4 + rnd()),
         });
-        const leg1 = bez(entry, c1, away, Math.ceil(want / 2));
+        const hopN = (a, b) => Math.max(3, Math.round(dist(a, b) / (GEO.pitch * 1.3)));
+        const leg1 = bez(entry, c1, away, hopN(entry, away));
         const d2 = { x: origin.x - away.x, y: origin.y - away.y };
         const l2 = Math.max(1, Math.hypot(d2.x, d2.y));
         const c2 = clampIn({
-            x: away.x + d2.x / l2 * l2 * 0.5 + (-d2.y / l2) * GEO.pitch * (2 + rnd() * 2.5),
-            y: away.y + d2.y / l2 * l2 * 0.5 + (d2.x / l2) * GEO.pitch * (2 + rnd() * 2.5),
+            x: away.x + d2.x * 0.5 + (-d2.y / l2) * l2 * 0.3 * (0.4 + rnd()),
+            y: away.y + d2.y * 0.5 + (d2.x / l2) * l2 * 0.3 * (0.4 + rnd()),
         });
-        const leg2 = bez(away, c2, origin, Math.floor(want / 2));
+        const leg2 = bez(away, c2, origin, hopN(away, origin));
         const trail = [...leg1.slice(0, -1), ...leg2]; // nối 2 cung, away dùng 1 lần
         const order = [d0, ...shuffle(allDirs.filter(d => d !== d0), rnd)];
         const dirCount = 1 + Math.floor(rnd() * 4); // xoay ngẫu nhiên 1–4 hướng
