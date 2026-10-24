@@ -95,7 +95,9 @@ export function buildShow(cal, seed) {
             const out = [];
             for (let i = 0; i <= n; i++) {
                 const k = i / n;
-                out.push(lerpPt(lerpPt(p0, pc, k), lerpPt(pc, p2, k), k));
+                // clamp TỪNG điểm sample — control point có thể lôi đường cong ra
+                // ngoài bảng (bug "rồng lượn ngoài rìa") nên phải giữ từng bước
+                out.push(clampIn(lerpPt(lerpPt(p0, pc, k), lerpPt(pc, p2, k), k)));
             }
             return out;
         };
@@ -342,7 +344,9 @@ function segMotion(samples, dt, total) {
     }
     if (len < 0.01)
         len = 0.01;
-    const ktsRaw = times.map(tt => f((((tt % total) + total) % total) / total));
+    // KHÔNG wrap mốc cuối: tt = total phải cho keyTime 1 (mod sẽ trả 0 →
+    // keyTimes không đơn điệu → browser loại bỏ animateMotion → đầu đứng yên)
+    const ktsRaw = times.map(tt => f(Math.min(1, tt / total)));
     const kps = cum.map(c => f(Math.min(1, c / len)));
     const kts = [];
     for (const k of ktsRaw)
@@ -350,6 +354,7 @@ function segMotion(samples, dt, total) {
             kts.push(k);
     if (kts[kts.length - 1] < 1) {
         kts[kts.length - 1] = 1;
+        kps[kps.length - 1] = kps[0];
     } // mốc cuối = 1
     if (kts[0] !== 0) {
         kts.unshift(0);
