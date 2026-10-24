@@ -1,8 +1,11 @@
 <!DOCTYPE html><html><body style="background:#111;margin:8px">
 <script>
-const frames = ['frame-00-t0.5','frame-02-t4','frame-04-t9','frame-06-t16','frame-08-t24'];
-document.write(frames.map(f =>
-  '<div style="color:#8b949e;font:11px monospace">' + f + '</div>' +
-  '<img src="../debug/' + f + '.svg" width="100%" style="border:1px solid #333;margin-bottom:6px">').join(''));
+let f = '';
+for (let i = 0; i < 18; i++) {
+  const n = String(i).padStart(2, '0');
+  f += '<div style="color:#8b949e;font:11px monospace">frame ' + n + '</div>' +
+    '<img src="../debug/frame-' + n + '.svg" width="100%" style="border:1px solid #333;margin-bottom:4px" onerror="this.style.display=\'none\'">';
+}
+document.write(f);
 </script>
 </body></html>

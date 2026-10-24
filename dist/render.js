@@ -317,8 +317,8 @@ function segMotion(samples, dt, total) {
 function dragonRiders(show, seed) {
     const total = show.total;
     const dt = 0.15;
-    const spacing = 8.5;
-    const segCount = 11; // đầu + 9 đốt thân + đốt đuôi
+    const spacing = 7; // < bán kính đốt → các đốt CHỐT nhau thành thân liền
+    const segCount = 14; // đầu + 12 đốt thân + đốt đuôi
     const chainSim = simulateChain(show.phases, total, dt, spacing, segCount);
     const chain = chainSim.samples;
     const bounds = [0, ...show.phases.map(p => p.t1)];
@@ -341,7 +341,7 @@ function dragonRiders(show, seed) {
     const FLAME = `<animateTransform attributeName="transform" type="scale" ${emitChannel(flameKnots, total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
     const segs = [];
     // thân: đốt 1..9 — circle KHÔNG viền (chồng khít thành thân liền) + gai hướng lên
-    const radii = [10, 9.5, 9, 8.4, 7.7, 7, 6.3, 5.6, 4.9];
+    const radii = [11, 10.6, 10.1, 9.5, 8.8, 8.1, 7.4, 6.7, 6, 5.4, 4.8, 4.3];
     for (let k = radii.length; k >= 1; k--) {
         const r = radii[k - 1];
         const spike = k <= 5
@@ -357,10 +357,12 @@ function dragonRiders(show, seed) {
         `<animateTransform attributeName="transform" type="rotate" values="-13 0 -5;13 0 -5;-13 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g>` +
         `<path d="M0 -7 C -11 -20 -25 -24 -31 -18 C -23 -13 -13 -9 -4 -5 Z" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.4">` +
         `<animateTransform attributeName="transform" type="rotate" values="11 0 -5;-15 0 -5;11 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g></g>`);
-    // đuôi: vây trên đốt cuối
+    // đuôi: lá spade + 2 gai phụ trên đốt cuối
     segs.push(`<g><animateMotion ${segMotion(chain[segCount - 1], dt, total)}/>` +
         `<g transform="scale(${DRAGON.scale})">${OPACITY}` +
-        `<polygon points="-6,0 4,-4.5 4,4.5" fill="${DRAGON.spike}" opacity="0.9"/></g></g>`);
+        `<polygon points="-2,-4 -9,-7 -6,0 -9,7 -2,4" fill="${DRAGON.spike}" opacity="0.95"/>` +
+        `<polygon points="-1,-2.5 -5,-3.5 -3,0 -5,3.5 -1,2.5" fill="${DRAGON.glow}" opacity="0.75"/>` +
+        `</g></g>`);
     // ĐẦU — xoay theo vector heading; lửa dài theo pha spray (group lồng nhau)
     const headContent = `
   <path d="M-4 -9 C -12 -17 -22 -18 -28 -12" stroke="${DRAGON.line}" stroke-width="2.4" fill="none" stroke-linecap="round"/>
