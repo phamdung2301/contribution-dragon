@@ -39,9 +39,10 @@ export function buildShow(cal, seed) {
     const bright = [];
     for (let c = 0; c < cols; c++)
         for (let r = 0; r < 7; r++) {
-            const day = cal.weeks[c][r];
-            if (day.level >= 2)
-                bright.push({ p: cellCenter(c, r), count: day.count });
+            const day = cal.weeks[c]?.[r];
+            if (!day || day.level < 2)
+                continue; // tuần rének (GitHub calendar) có thể < 7 ngày
+            bright.push({ p: cellCenter(c, r), count: day.count });
         }
     const pool0 = bright.length >= 4 ? bright : (() => {
         const any_ = [];
@@ -295,6 +296,10 @@ function segMotion(samples, dt, total) {
             times.push(i * dt);
         }
     }
+    // ép mốc cuối = đúng total: sample cuối có thời gian mod total về 0 sẽ làm
+    // keyTimes không đơn điệu → animateMotion vô hiệu → đầu rồng đứng yên
+    pts[pts.length - 1] = samples[samples.length - 1];
+    times[times.length - 1] = total;
     if (pts.length === 1)
         pts.push({ x: pts[0].x + 0.01, y: pts[0].y });
     let d = `M ${f(pts[0].x)} ${f(pts[0].y)}`;
@@ -307,8 +312,19 @@ function segMotion(samples, dt, total) {
     }
     if (len < 0.01)
         len = 0.01;
-    const kts = times.map(tt => f((((tt % total) + total) % total) / total));
+    const ktsRaw = times.map(tt => f((((tt % total) + total) % total) / total));
     const kps = cum.map(c => f(Math.min(1, c / len)));
+    const kts = [];
+    for (const k of ktsRaw)
+        if (kts.length === 0 || k > kts[kts.length - 1])
+            kts.push(k);
+    if (kts[kts.length - 1] < 1) {
+        kts[kts.length - 1] = 1;
+    } // mốc cuối = 1
+    if (kts[0] !== 0) {
+        kts.unshift(0);
+        kps.unshift(kps[0]);
+    }
     return `path="${d}" keyPoints="${kps.join(";")}" keyTimes="${kts.join(";")}" calcMode="linear"`;
 }
 // ============================================================
@@ -443,7 +459,9 @@ export function renderDragon(cal, theme, opts = {}) {
     // ===== bảng contribution =====
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < 7; r++) {
-            const day = cal.weeks[c][r];
+            const day = cal.weeks[c]?.[r];
+            if (!day)
+                continue; // tuần rének
             const x = GEO.marginX + c * GEO.pitch;
             const y = GEO.top + r * GEO.pitch;
             if (day.level === 4) {
