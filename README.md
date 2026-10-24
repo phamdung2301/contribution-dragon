@@ -1,26 +1,82 @@
 # 🐉 contribution-dragon
 
 > Your GitHub contribution graph, guarded by an animated dragon.
+> A self-built generator — no snake libraries, no JavaScript in the output:
+> everything compiles to pure SVG + SMIL, so it animates inside any GitHub README.
 
 ![demo](demo/dragon-dark.svg)
 
-Zero-dependency TypeScript that renders the GitHub contribution calendar as a
-redesigned cell board (rounded corners, glow on peak days, month labels) with
-an **animated neon dragon** flying over it — head, flapping wings, dorsal
-spikes, fire breath. Pure SMIL, **no JavaScript**, so it animates inside any
-GitHub README.
+---
 
-## Use it in your profile
+## Features
 
-`.github/workflows/dragon.yml`:
+- **Hunting choreography** — the dragon does not crawl a fixed path. Each
+  cycle it performs **3 hunting sessions**: fade-in outside the grid →
+  sweep 11–14 cells across the board → rotate and breathe fire on bright
+  cells → wander on foot → vanish and teleport to the next hunting ground.
+- **Rotating flamethrower** — at each hunting ground the dragon turns
+  through a **random 1–4 directions**, each blast covering a **random
+  1–3 cell range**. Directions whose whole flame cone would leave the grid
+  are skipped automatically.
+- **Burn state machine on cells** — every cell on the fire path plays:
+  `INTACT → BURNING (flame icon burns on the cell for 0.5 s) → SCORCHED
+  (charred tint held until the cycle resets)`. Bright cells lose their
+  color **gradually, nearest cell first** (0.24 s stagger, 0.35 s fade).
+- **Vector head + rope-constraint tail chain** — the head is a position +
+  heading vector; its rotation follows its velocity vector (normalized to
+  ±90° with a mirror-flip, so it never flies upside down). The tail is a
+  13-segment chain linked tail-to-head by a rope-constraint simulation
+  (0.15 s steps) — segments trail the head's historical path exactly.
+- **Spin-in entrances** — ~55% of teleports arrive with a full 360° twirl
+  (random direction); accumulated angles stay multiples of 360° so loops
+  are seamless.
+- **Redesigned board** — rounded cells, glow ring behind peak-activity
+  days, month labels, contribution counter.
+- **Zero dependencies** — one GraphQL call, everything else is hand-rolled
+  TypeScript. The output is a single self-contained SVG.
+
+## Movement logic (the choreography)
+
+Each cycle (~33–40 s, deterministic per seed) compiles into a timeline of
+phases; the head's position is a piecewise-linear function of time and the
+tail is simulated against it:
+
+```
+FADE-IN          arrive outside the grid boundary (55%: + 360° spin-in)
+ENTER            cross the boundary at the nearest edge cell
+SWEEP            glide an S-curve across 11–14 cells (two bézier legs:
+                 entry → away → spray origin; hops ≤ 1.3 cells so the
+                 dragon slides across cells instead of jumping)
+AIM + SPRAY      rotate 0.14 s → breathe fire 0.7–1.24 s → repeat 1–4×
+                 (fire path = every cell in range; bright cells start a
+                 sequential color-loss wave, nearest first)
+HOLD             0.5 s + (farthest cell's fade completion) — the body
+                 holds its pose instead of coiling
+WANDER           2–4 random walk steps (may poke outside the boundary)
+VANISH           fade-out → invisible slide → next hunting ground
+```
+
+The tail chain: segment *k* is re-attached each simulation step to sit
+exactly `spacing` behind segment *k-1* along the line joining them; while
+the head holds still the body **keeps its pose** instead of coiling.
+Cycle-boundary snaps (segments returning to their spawn stack) happen only
+during invisible slides.
+
+## Setup — GitHub Action (recommended)
+
+In the repo where you want the dragon (usually your profile repo,
+`YOU/YOU`), create `.github/workflows/dragon.yml`:
 
 ```yaml
 name: Contribution Dragon
 on:
-  schedule: [{cron: '23 2 * * *'}]
+  schedule:
+    - cron: '23 2 * * *'        # daily refresh
   workflow_dispatch:
-  push: {branches: [main]}
-permissions: {contents: write}
+  push:
+    branches: [main]
+permissions:
+  contents: write
 jobs:
   generate:
     runs-on: ubuntu-latest
@@ -33,8 +89,11 @@ jobs:
           out-dark: dist/dragon-dark.svg
           out-light: dist/dragon-light.svg
       - uses: crazy-max/ghaction-github-pages@v4
-        with: {target_branch: output, build_dir: dist}
-        env: {GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}}
+        with:
+          target_branch: output
+          build_dir: dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 Then embed from the `output` branch:
@@ -43,31 +102,56 @@ Then embed from the `output` branch:
 <img src="https://raw.githubusercontent.com/YOU/YOU/output/dragon-dark.svg" width="100%">
 ```
 
-## CLI
+### Action inputs
+
+| Input | Required | Description |
+|---|---|---|
+| `user` | ✔ | GitHub username whose graph the dragon guards |
+| `token` | ✔ | `secrets.GITHUB_TOKEN` works out of the box |
+| `out-dark` | — | Output path for the dark-theme SVG (skip to disable) |
+| `out-light` | — | Output path for the light-theme SVG |
+| `show-count` | — | `true`/`false` — the "N contributions" label |
+
+## Setup — CLI
 
 ```bash
 npm i -g phamdung2301/contribution-dragon
+
 contribution-dragon --user YOUR_USERNAME --token ghp_xxx --theme dark --out dragon.svg
-# hoặc demo không cần token:
-contribution-dragon --fixture --theme light --out demo.svg
+contribution-dragon --fixture --theme light --out demo.svg     # no token needed
+contribution-dragon --user YOU --token ghp_xxx --seed 777 --out dragon.svg
 ```
+
+| Flag | Description |
+|---|---|
+| `--user` | GitHub username |
+| `--token` | Token with `read:user` scope (or `GH_TOKEN` env) |
+| `--fixture` | Render the deterministic demo calendar instead of fetching |
+| `--theme` | `dark` or `light` |
+| `--seed` | Seed the choreography RNG (same seed = same flight plan) |
+| `--out` | Output file |
+| `--no-count` | Hide the contributions label |
 
 ## How it works
 
-1. **Fetch** — one GraphQL call (`contributionsCollection.contributionCalendar`).
-2. **Route** — the dragon sweeps the grid **column by column**, alternating
-   up/down (boustrophedon). It only ever moves down / right / up — never
-   backwards — so the head (rotated along the path via `rotate="auto"`)
-   never flips upside down. Empty cells are flown over.
-3. **Render** — one SVG path + a chain of *riders* (head, 14 body segments,
-   wings, tail) each following the same path with staggered negative
-   `begin` offsets, producing the serpentine follow. Flapping wings, dorsal
-   spikes and the fire flicker are all SMIL.
+1. **Fetch** — one GraphQL call: `contributionsCollection.contributionCalendar`.
+2. **Choreograph** — pick bright-cell targets, plan entry/away/origin
+   béziers, spray directions (validated to stay inside the grid), walk
+   steps; every phase gets a start/end time.
+3. **Simulate the chain** — sample the head at 0.15 s steps; re-attach each
+   tail segment behind its leader (rope constraint), holding pose when the
+   head is still.
+4. **Compile to SMIL** — each segment becomes its own `animateMotion` with
+   `keyPoints`/`keyTimes`; each burned cell gets its fill-flame and scorch
+   animations baked into full-cycle `keyTimes`. Zero runtime JS.
 
-## Themes
+## Debug tooling
 
-`dark` (mint on near-black) and `light` — see `demo/`. Board cells are
-redesigned: rounded, softer empty state, glow ring behind peak-activity days.
+```bash
+node tools/trace-head.mjs     # every phase + head position per second
+node tools/debug-chain.mjs    # colored chain frames + head-to-tail stretch
+node tools/analyze-live.mjs   # % of time the head spends inside the grid
+```
 
 ## License
 
