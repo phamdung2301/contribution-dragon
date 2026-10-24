@@ -67,8 +67,13 @@ export function buildShow(cal, seed) {
     for (let s = 0; s < SESSIONS; s++) {
         const pool = shuffle(pool0.filter(b => dist(b.p, cur) > GEO.pitch * 3), rnd).slice(0, 10);
         const target = (pool[0] ?? pool0[s % pool0.length]).p;
-        const allDirs = shuffle([{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }], rnd);
-        // hướng phun: origin VÀ toàn tầm lửa 1–3 ô phải nằm trong bảng
+        // hướng phun: 8 HƯỚNG (4 chính + 4 chéo) — theo hướng MIỆNG rồng.
+        // Mỗi hướng phải có toàn tầm lửa 1–3 ô trong bảng: hướng nào mà cone
+        // chạm boundary của bảng thì BỎ, không phun ra ngoài.
+        const allDirs = shuffle([
+            { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
+            { x: 1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
+        ], rnd);
         const sprayFits = (d) => {
             for (let k = -1; k <= 3; k++) {
                 const q = { x: target.x + d.x * GEO.pitch * k, y: target.y + d.y * GEO.pitch * k };
