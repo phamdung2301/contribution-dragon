@@ -160,7 +160,7 @@ export function buildShow(cal: Calendar, seed: number): Show {
 
     const walks: Pt[] = [];
     let wp = { ...origin };
-    const nSteps = 2 + Math.floor(rnd() * 3);
+    const nSteps = 4 + Math.floor(rnd() * 4);   // 4–7 bước — xuất hiện lâu hơn
     for (let i = 0; i < nSteps; i++) {
       const ang = rnd() * Math.PI * 2;
       const step = GEO.pitch * (1 + rnd() * 2);
@@ -215,7 +215,7 @@ export function buildShow(cal: Calendar, seed: number): Show {
 
     for (const { d, len, rot: rAbs } of plan.dirs) {
       push("rotate", plan.origin, plan.origin, 0.14, rAbs);
-      push("spray", plan.origin, plan.origin, 0.7 + len * 0.18, rAbs);
+      push("spray", plan.origin, plan.origin, 0.9 + len * 0.22, rAbs);
       phases[phases.length - 1].len = len;
       for (let k = 1; k <= len; k++) {
         const cell = { x: plan.origin.x + d.x * GEO.pitch * k, y: plan.origin.y + d.y * GEO.pitch * k };
@@ -224,15 +224,15 @@ export function buildShow(cal: Calendar, seed: number): Show {
         const row = Math.round((cell.y - GEO.top - GEO.cell / 2) / GEO.pitch);
         const day = cal.weeks[col]?.[row];
         if (!day) continue;
-        burns.push({ col, row, x: cell.x, y: cell.y, level: day.level, t: t - (0.7 + len * 0.18) + 0.2 + (k - 1) * 0.24 });
+        burns.push({ col, row, x: cell.x, y: cell.y, level: day.level, t: t - (0.9 + len * 0.22) + 0.25 + (k - 1) * 0.3 });
       }
     }
 
-    const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.85));
-    push("hold", plan.origin, plan.origin, 0.5 + Math.max(0, lastEffectEnd - t));
+    const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.9));     // flame 0.5s + flash/fade 0.4s
+    push("hold", plan.origin, plan.origin, 1.2 + Math.max(0, lastEffectEnd - t));
     let wp = plan.origin;
     for (const stepTo of plan.walks) {
-      push("walk", wp, stepTo, 0.55);
+      push("walk", wp, stepTo, 0.65);
       wp = stepTo;
     }
     push("fadeout", wp, wp, 0.35);
@@ -532,18 +532,38 @@ export function renderDragon(cal: Calendar, theme: Theme, opts: { showCount?: bo
   const show = buildShow(cal, seed);
   const parts: string[] = [];
 
-  // ===== bảng contribution =====
+  // ===== bảng contribution — cell state machine: INTACT → BURNING → SCORCHED =====
+  const T = show.total;
+  const burnMap = new Map<string, Burn>();
+  for (const b of show.burns) {
+    const key = `${b.col},${b.row}`;
+    if (!burnMap.has(key)) burnMap.set(key, b);   // lần đốt sớm nhất thắng
+  }
   for (let c = 0; c < cols; c++) {
     for (let r = 0; r < 7; r++) {
       const day = cal.weeks[c]?.[r];
       if (!day) continue;
       const x = GEO.marginX + c * GEO.pitch;
       const y = GEO.top + r * GEO.pitch;
+      const burn = burnMap.get(`${c},${r}`);
+      const orig = day.level === 0 ? theme.empty : theme.levels[day.level - 1];
+      // INTACT → (t) lửa bốc cháy 0.5s (giữ màu) → chớp trắng → mòn về SCORCHED 0.4s
+      const iS = burn ? burn.t / T : 0;
+      const iM = burn ? Math.min(0.999, (burn.t + 0.5) / T) : 0;
+      const iF = burn ? Math.min(0.999, (burn.t + 0.62) / T) : 0;
+      const iE = burn ? Math.min(0.999, (burn.t + 1.02) / T) : 0;
+
       if (day.level === 4) {
-        parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16"/>`);
+        const glowFade = burn
+          ? `<animate attributeName="opacity" values="0.16;0.16;0.1;0;0" keyTimes="0;${f(iS)};${f(iM)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
+          : "";
+        parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16">${glowFade}</rect>`);
       }
+      const fillAnim = burn
+        ? `<animate attributeName="fill" values="${orig};${orig};${orig};#FFFFFF;${theme.scorch};${theme.scorch}" keyTimes="0;${f(iS)};${f(iM)};${f(iF)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
+        : "";
       parts.push(
-        `<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${day.level === 0 ? theme.empty : theme.levels[day.level - 1]}"/>`
+        `<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${orig}">${fillAnim}</rect>`
       );
     }
     const first = cal.weeks[c][0]?.date ?? "";
@@ -556,10 +576,32 @@ export function renderDragon(cal: Calendar, theme: Theme, opts: { showCount?: bo
     parts.push(`<text x="${width - GEO.marginX}" y="${GEO.top - 9}" text-anchor="end" font-family="${FONT}" font-size="10" fill="${theme.label}">${total} contributions — last year</text>`);
   }
 
-  // ===== vòng ignition trắng khi lửa chạm ô =====
-  const T = show.total;
+  // ===== BURNING: biểu tượng lửa cháy trên ô trong 0.5s + vòng ignition =====
   for (const b of show.burns) {
     const start = ((b.t % T) + T) % T;
+    // flame icon trên ô: 0.5s với flicker + phóng to
+    const kts: number[] = [0];
+    const ops: number[] = [0];
+    const scs: string[] = ["0.4 0.4"];
+    const steps = 6;
+    for (let i = 0; i <= steps; i++) {
+      const tt = start + (i / steps) * 0.5;
+      kts.push(f(Math.min(0.999, tt / T)));
+      ops.push(f(i === 0 ? 0.5 : (i % 2 === 1 ? 1 : 0.65)));
+      const sc = 0.8 + (i / steps) * 1.3 + (i % 2 === 1 ? 0.15 : 0);
+      scs.push(`${f(sc)} ${f(sc)}`);
+    }
+    kts.push(1); ops.push(0); scs.push("0.4 0.4");
+    parts.push(
+      `<g transform="translate(${f(b.x)},${f(b.y)})" opacity="0">` +
+      `<animate attributeName="opacity" values="${ops.join(";")}" keyTimes="${kts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>` +
+      `<circle r="6.5" fill="#F97316" opacity="0.35"/>` +
+      `<g><animateTransform attributeName="transform" type="scale" values="${scs.join(";")}" keyTimes="${kts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>` +
+      `<path d="M0 3.4 C -3.4 1.2 -2.2 -2.2 0 -4.4 C 1.1 -2.2 3.3 -1.1 2.9 1.1 C 2.6 2.6 1.1 3.4 0 3.4 Z" fill="#F97316"/>` +
+      `<path d="M0 3.4 C -1.3 2 -0.9 0.4 0 -0.9 C 0.9 0.2 1.5 1.1 1.1 2.2 C 0.9 2.8 0.4 3.4 0 3.4 Z" fill="#FDE68A"/>` +
+      `</g></g>`
+    );
+    // vòng ignition trắng
     const a = f(start / T);
     const b2 = f(Math.min(0.999, (start + 0.07) / T));
     const c2 = f(Math.min(0.999, (start + 0.3) / T));

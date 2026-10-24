@@ -1,7 +1,7 @@
 export const THEMES = {
     dark: {
         empty: "#1B2129",
-        scorch: "#101318",
+        scorch: "#1a120c",
         levels: ["#123B33", "#0C6B5C", "#0C9F8A", "#00F5D4"],
         glow: "#00F5D4",
         label: "#8B949E",
@@ -13,7 +13,7 @@ export const THEMES = {
     },
     light: {
         empty: "#EAEDF0",
-        scorch: "#DDE1E7",
+        scorch: "#E3DED2",
         levels: ["#D6F5EC", "#9FE8D5", "#35C4A5", "#00947C"],
         glow: "#00A98A",
         label: "#57606A",
