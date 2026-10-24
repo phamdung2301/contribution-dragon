@@ -1,0 +1,25 @@
+{
+  "name": "contribution-dragon",
+  "version": "1.0.0",
+  "description": "Your GitHub contribution graph, guarded by an animated dragon. Zero-dependency TypeScript generator: CLI + GitHub Action.",
+  "type": "module",
+  "bin": {
+    "contribution-dragon": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "demo": "node dist/cli.js --fixture --theme dark --out demo/dragon-dark.svg && node dist/cli.js --fixture --theme light --out demo/dragon-light.svg"
+  },
+  "keywords": [
+    "github",
+    "contributions",
+    "svg",
+    "dragon",
+    "github-actions"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.6.0"
+  }
+}

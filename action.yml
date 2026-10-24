@@ -1,0 +1,30 @@
+name: "Contribution Dragon"
+description: "Your GitHub contribution graph guarded by an animated dragon — redesigned cells, SMIL motion, zero dependencies."
+branding:
+  icon: "flame"
+  color: "green"
+inputs:
+  user:
+    description: "GitHub username whose contribution graph the dragon guards."
+    required: true
+  token:
+    description: "GitHub token with read:user scope (secrets.GITHUB_TOKEN works for the profile repo owner)."
+    required: true
+  out-dark:
+    description: "Output path for the dark-theme dragon SVG. Leave empty to skip."
+    required: false
+    default: ""
+  out-light:
+    description: "Output path for the light-theme dragon SVG. Leave empty to skip."
+    required: false
+    default: ""
+  show-count:
+    description: "Show the 'N contributions' label. true/false."
+    required: false
+    default: "true"
+outputs:
+  files:
+    description: "Newline-separated list of rendered SVG files."
+runs:
+  using: "node20"
+  main: "dist/main.js"
