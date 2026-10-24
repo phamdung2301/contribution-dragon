@@ -59,6 +59,7 @@ interface Show {
   pathD: string;
   pathLen: number;
   burns: Burn[];
+  vertices: Pt[];
 }
 
 const rotFor = (d: Pt) => (d.y === 1 ? 90 : d.y === -1 ? -90 : 0);
@@ -122,12 +123,15 @@ export function buildShow(cal: Calendar, seed: number): Show {
     const entryC = Math.max(0, Math.min(cols - 1, Math.round((arrival.x - GEO.marginX - GEO.cell / 2) / GEO.pitch)));
     const entryR = Math.max(0, Math.min(6, Math.round((arrival.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
     const entry = cellCenter(entryC, entryR);
-    // away: 4–6 ô về phía TÂM bảng (vòng săn gọn 10–14 ô, không traverse hết bảng)
-    const toC = { x: center.x - origin.x, y: center.y - origin.y };
-    const tcl = Math.max(1, Math.hypot(toC.x, toC.y));
+    // away: 6–9 ô VÀO TRONG BẢNG từ điểm nhập (theo hướng tâm) — sweep
+    // băng qua các ô thay vì xoay local; perpIn dùng cho 2 control point
+    const into = { x: center.x - entry.x, y: center.y - entry.y };
+    const il = Math.max(1, Math.hypot(into.x, into.y));
+    const intoDir = { x: into.x / il, y: into.y / il };
+    const perpIn = { x: -intoDir.y, y: intoDir.x };
     const away = clampIn({
-      x: origin.x + (toC.x / tcl) * GEO.pitch * (4 + rnd() * 2) + (-toC.y / tcl) * GEO.pitch * (rnd() - 0.5) * 3,
-      y: origin.y + (toC.y / tcl) * GEO.pitch * (4 + rnd() * 2) + (toC.x / tcl) * GEO.pitch * (rnd() - 0.5) * 3,
+      x: entry.x + intoDir.x * GEO.pitch * (6 + rnd() * 3) + perpIn.x * (rnd() - 0.5) * GEO.pitch * 4,
+      y: entry.y + intoDir.y * GEO.pitch * (6 + rnd() * 3) + perpIn.y * (rnd() - 0.5) * GEO.pitch * 4,
     });
     const bez = (p0: Pt, pc: Pt, p2: Pt, n: number): Pt[] => {
       const out: Pt[] = [];
@@ -142,16 +146,16 @@ export function buildShow(cal: Calendar, seed: number): Show {
     const d1 = { x: away.x - entry.x, y: away.y - entry.y };
     const l1 = Math.max(1, Math.hypot(d1.x, d1.y));
     const c1 = clampIn({
-      x: entry.x + d1.x * 0.5 + (-d1.y / l1) * l1 * 0.3 * (0.4 + rnd()),
-      y: entry.y + d1.y * 0.5 + (d1.x / l1) * l1 * 0.3 * (0.4 + rnd()),
+      x: (entry.x + away.x) / 2 + perpIn.x * (rnd() - 0.5) * GEO.pitch * 4,
+      y: (entry.y + away.y) / 2 + perpIn.y * (rnd() - 0.5) * GEO.pitch * 4,
     });
     const hopN = (a: Pt, b: Pt) => Math.max(3, Math.round(dist(a, b) / (GEO.pitch * 1.3)));
     const leg1 = bez(entry, c1, away, hopN(entry, away));
     const d2 = { x: origin.x - away.x, y: origin.y - away.y };
     const l2 = Math.max(1, Math.hypot(d2.x, d2.y));
     const c2 = clampIn({
-      x: away.x + d2.x * 0.5 + (-d2.y / l2) * l2 * 0.3 * (0.4 + rnd()),
-      y: away.y + d2.y * 0.5 + (d2.x / l2) * l2 * 0.3 * (0.4 + rnd()),
+      x: (away.x + origin.x) / 2 + perpIn.x * (rnd() - 0.5) * GEO.pitch * 2.5,
+      y: (away.y + origin.y) / 2 + perpIn.y * (rnd() - 0.5) * GEO.pitch * 2.5,
     });
     const leg2 = bez(away, c2, origin, hopN(away, origin));
     const trail = [...leg1.slice(0, -1), ...leg2];    // nối 2 cung, away dùng 1 lần
@@ -247,7 +251,7 @@ export function buildShow(cal: Calendar, seed: number): Show {
   pathLen += dist(vertices[vertices.length - 1], vertices[0]);
   pathD += " Z";
 
-  return { phases, total: t, pathD, pathLen, burns };
+  return { phases, total: t, pathD, pathLen, burns, vertices };
 }
 
 // ============================================================
@@ -266,41 +270,9 @@ function headPositionAt(phases: Phase[], t: number): Pt {
   return phases[phases.length - 1].to;
 }
 
-interface ChainSim { samples: Pt[][]; dt: number; n: number }
-
-/**
- * Mô phỏng chuỗi đuôi: seg[0] = đầu (vector vị trí + heading), seg[k] bám
- * seg[k-1] với khoảng cách cố định (rope constraint) — đốt sau nối đuôi
- * vào đốt trước theo đúng quỹ đạo lịch sử. Khởi đầu tất cả stacked tại
- * điểm xuất phát → thân "mọc ra" khi đầu bay; snap ở vòng lặp xảy ra trong
- * lúc tàng hình nên không thấy.
- */
-export function simulateChain(phases: Phase[], total: number, dt: number, spacing: number, segCount: number): ChainSim {
-  const n = Math.floor(total / dt);          // không vượt quá total — keyTimes phải đơn điệu
-  const head: Pt[] = [];
-  for (let i = 0; i <= n; i++) head.push(headPositionAt(phases, i * dt));
-  head.push(headPositionAt(phases, total));  // sample cuối đúng mốc kết thúc chu kỳ
-
-  const chain: Pt[][] = [head];
-  for (let k = 1; k < segCount; k++) {
-    const leader = chain[k - 1];
-    const seg: Pt[] = [{ ...leader[0] }];
-    for (let i = 1; i <= n; i++) {
-      const L = leader[i];
-      const Lprev = leader[i - 1];
-      const headMoved = Math.hypot(L.x - Lprev.x, L.y - Lprev.y) > 0.4;
-      const c = seg[i - 1];
-      if (!headMoved) { seg.push({ ...c }); continue; }   // đầu đứng yên → thân GIỮ thế (không cuộn)
-      const dx = c.x - L.x, dy = c.y - L.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 0.001) { seg.push({ ...L }); continue; }
-      seg.push({ x: L.x + (dx / len) * spacing, y: L.y + (dy / len) * spacing });
-    }
-    chain.push(seg);
-  }
-  return { samples: chain, dt, n };
-}
-
+// ============================================================
+// dragon assembly
+// ============================================================
 /** Hướng đầu (độ, chuẩn hóa [-90,90]) + lật gương — từ vector vận tốc. */
 function headingChannel(samples: Pt[], dt: number, sampleEvery: number): { angles: number[]; flips: number[]; kts: number[] } {
   const n = samples.length - 1;
@@ -345,55 +317,47 @@ function linEmit(kts: number[], vals: number[], fmt: (v: number) => string): str
   return `values="${vals.map(v => fmt(v)).join(";")}" keyTimes="${kts.map(k => f(k)).join(";")}"`;
 }
 
-/** path + keyTimes/keyPoints cho MỘT đốt từ sample vị trí của nó. */
-function segMotion(samples: Pt[], dt: number, total: number): string {
-  const pts: Pt[] = [], times: number[] = [];
-  for (let i = 0; i < samples.length; i++) {
-    const p = samples[i];
-    if (i === 0 || dist(p, samples[i - 1]) > 0.02) { pts.push(p); times.push(i * dt); }
-  }
-  // ép mốc cuối = đúng total: sample cuối có thời gian mod total về 0 sẽ làm
-  // keyTimes không đơn điệu → animateMotion vô hiệu → đầu rồng đứng yên
-  pts[pts.length - 1] = samples[samples.length - 1];
-  times[times.length - 1] = total;
-  if (pts.length === 1) pts.push({ x: pts[0].x + 0.01, y: pts[0].y });
-  let d = `M ${f(pts[0].x)} ${f(pts[0].y)}`;
-  let len = 0;
-  const cum: number[] = [0];
-  for (let i = 1; i < pts.length; i++) {
-    len += dist(pts[i - 1], pts[i]);
-    cum.push(len);
-    d += ` L ${f(pts[i].x)} ${f(pts[i].y)}`;
-  }
-  if (len < 0.01) len = 0.01;
-  // KHÔNG wrap mốc cuối: tt = total phải cho keyTime 1 (mod sẽ trả 0 →
-  // keyTimes không đơn điệu → browser loại bỏ animateMotion → đầu đứng yên)
-  const ktsRaw = times.map(tt => f(Math.min(1, tt / total)));
-  const kps = cum.map(c => f(Math.min(1, c / len)));
-  const kts: number[] = [];
-  for (const k of ktsRaw) if (kts.length === 0 || k > kts[kts.length - 1]) kts.push(k);
-  if (kts[kts.length - 1] < 1) { kts[kts.length - 1] = 1; kps[kps.length - 1] = kps[0]; }   // mốc cuối = 1
-  if (kts[0] !== 0) { kts.unshift(0); kps.unshift(kps[0]); }
-  return `path="${d}" keyPoints="${kps.join(";")}" keyTimes="${kts.join(";")}" calcMode="linear"`;
-}
-
-// ============================================================
-// dragon assembly
-// ============================================================
-function dragonRiders(show: Show, seed: number): string {
+function dragonRiders(show: Show): string {
   const total = show.total;
-  const dt = 0.15;
-  const spacing = 7;                          // < bán kính đốt → các đốt CHỐT nhau thành thân liền
-  const segCount = 14;                        // đầu + 12 đốt thân + đốt đuôi
-  const chainSim = simulateChain(show.phases, total, dt, spacing, segCount);
-  const chain = chainSim.samples;
-
+  const segLens = show.phases.map(p => (p.kind === "move" || p.kind === "walk" || p.kind === "slide") ? dist(p.from, p.to) : 0);
   const bounds = [0, ...show.phases.map(p => p.t1)];
+
+  // polyline của đầu: vertices + cumulative distances
+  const verts = show.vertices;
+  const cum: number[] = [0];
+  for (let i = 1; i < verts.length; i++) cum.push(cum[i - 1] + dist(verts[i - 1], verts[i]));
+  const pointAtDist = (d: number): Pt => {
+    const dd = Math.max(0, Math.min(show.pathLen, d));
+    let i = 1;
+    while (i < cum.length && cum[i] < dd) i++;
+    const k = (dd - cum[i - 1]) / Math.max(0.0001, cum[i] - cum[i - 1]);
+    return lerpPt(verts[i - 1], verts[i], k);
+  };
+  const distAt = (t: number) => {
+    const T = show.phases[show.phases.length - 1].t1;
+    const tt = ((t % T) + T) % T;
+    let d = 0;
+    for (let i = 0; i < show.phases.length; i++) {
+      const ph = show.phases[i];
+      if (tt <= ph.t1) {
+        if (ph.kind === "move" || ph.kind === "walk" || ph.kind === "slide") {
+          const k = (tt - ph.t0) / Math.max(0.0001, ph.t1 - ph.t0);
+          return d + segLens[i] * k;
+        }
+        return d;
+      }
+      d += segLens[i];
+    }
+    return d;
+  };
+
   const OPACITY = `<animate attributeName="opacity" ${linEmit(
     bounds.map(b => b / total), bounds.map(b => f(opacityAt(show.phases, b))), v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
 
-  // heading của đầu — từ vector vận tốc (định nghĩa vector của đầu)
-  const { angles, flips, kts: hKts } = headingChannel(chain[0], dt, 0.3);
+  // heading của đầu — từ vector vận tốc (sample mỗi 0.3s)
+  const headPts: Pt[] = [], headTs: number[] = [];
+  for (let t = 0; t <= total; t += 0.3) { headPts.push(pointAtDist(distAt(t))); headTs.push(t); }
+  const { angles, flips, kts: hKts } = headingChannel(headPts, 0.3, 0.3);
   const ROT = `<animateTransform attributeName="transform" type="rotate" ${linEmit(hKts, angles, v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
   const FLIP = `<animateTransform attributeName="transform" type="scale" ${snapEmit(hKts, flips, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
 
@@ -410,42 +374,51 @@ function dragonRiders(show: Show, seed: number): string {
   const FLAME = `<animateTransform attributeName="transform" type="scale" ${emitChannel(
     flameKnots, total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
 
+  /** rider trễ arcDelay px dọc path chung — keyPoints = (d(t) - arcDelay)/len */
+  const rider = (arcDelay: number, content: string) => {
+    const kps = bounds.map(b => f(Math.max(0, Math.min(1, (distAt(b) - arcDelay) / show.pathLen))));
+    const kts = bounds.map(b => f(b / total));
+    return `<g><animateMotion dur="${f(total)}s" repeatCount="indefinite" path="${show.pathD}" keyPoints="${kps.join(";")}" keyTimes="${kts.join(";")}" calcMode="linear"/>` +
+      `<g transform="scale(${DRAGON.scale})">${OPACITY}${content}</g></g>`;
+  };
+
   const segs: string[] = [];
 
-  // thân: đốt 1..9 — circle KHÔNG viền (chồng khít thành thân liền) + gai hướng lên
-  const radii = [11, 10.6, 10.1, 9.5, 8.8, 8.1, 7.4, 6.7, 6, 5.4, 4.8, 4.3];
+  // thân: 12 đốt — MỖI ĐỐT 2 LỚP: viền mint (r+1.2) trước, fill đậm sau →
+  // silhouette mint LIÊN MẠCH bao toàn chuỗi (không đường chia đốt)
+  const radii = [11, 10.6, 10.2, 9.7, 9.2, 8.6, 8, 7.4, 6.8, 6.2, 5.6, 5];
   for (let k = radii.length; k >= 1; k--) {
     const r = radii[k - 1];
-    const spike = k <= 5
+    segs.push(rider(k * 7,
+      `<circle r="${r + 1.2}" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.5"/>`));
+  }
+  for (let k = radii.length; k >= 1; k--) {
+    const r = radii[k - 1];
+    const spike = k <= 7
       ? `<polygon points="0,${-r + 1} 3.4,${-r - 5.5} -3.4,${-r - 5.5}" fill="${DRAGON.spike}" opacity="0.95"/>`
       : "";
-    segs.push(
-      `<g><animateMotion ${segMotion(chain[k], dt, total)}/>` +
-      `<g transform="scale(${DRAGON.scale})">${OPACITY}${spike}<circle r="${r}" fill="${k % 2 === 0 ? DRAGON.body : DRAGON.shade}"/></g></g>`
-    );
+    segs.push(rider(k * 7,
+      `${spike}<circle r="${r}" fill="${k % 2 === 0 ? DRAGON.body : DRAGON.shade}"/>`));
   }
 
   // cánh trên đốt 3
-  segs.push(
-    `<g><animateMotion ${segMotion(chain[3], dt, total)}/>` +
-    `<g transform="scale(${DRAGON.scale})">${OPACITY}` +
+  segs.push(rider(3 * 7,
     `<g opacity="0.5"><path d="M2 -8 C -10 -24 -27 -30 -35 -24 C -27 -19 -17 -13 -5 -7 Z" fill="${DRAGON.shade}">` +
     `<animateTransform attributeName="transform" type="rotate" values="-13 0 -5;13 0 -5;-13 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g>` +
     `<path d="M0 -7 C -11 -20 -25 -24 -31 -18 C -23 -13 -13 -9 -4 -5 Z" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.4">` +
-    `<animateTransform attributeName="transform" type="rotate" values="11 0 -5;-15 0 -5;11 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g></g>`
-  );
+    `<animateTransform attributeName="transform" type="rotate" values="11 0 -5;-15 0 -5;11 0 -5" dur="0.72s" repeatCount="indefinite"/></path>` +
+    `<g transform="translate(2,2)"><path d="M0 0 C 5 -1 9 -3 13 -2 C 10 1 9 3 5 4 Z" fill="#F97316" opacity="0.9"/></g>`
+  ));
 
-  // đuôi: lá spade + 2 gai phụ trên đốt cuối
-  segs.push(
-    `<g><animateMotion ${segMotion(chain[segCount - 1], dt, total)}/>` +
-    `<g transform="scale(${DRAGON.scale})">${OPACITY}` +
-    `<polygon points="-2,-4 -9,-7 -6,0 -9,7 -2,4" fill="${DRAGON.spike}" opacity="0.95"/>` +
-    `<polygon points="-1,-2.5 -5,-3.5 -3,0 -5,3.5 -1,2.5" fill="${DRAGON.glow}" opacity="0.75"/>` +
-    `</g></g>`
-  );
+  // đuôi: spade lớn trên đốt cuối (trễ nhất)
+  segs.push(rider(13 * 7,
+    `<circle r="5" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.5"/>` +
+    `<polygon points="-2,-4 -10,-7 -7,0 -10,7 -2,4" fill="${DRAGON.spike}" opacity="0.95"/>` +
+    `<polygon points="-1,-2.5 -7,-4 -4,0 -7,4 -1,2.5" fill="${DRAGON.glow}" opacity="0.8"/>`
+  ));
 
-  // ĐẦU — xoay theo vector heading; lửa dài theo pha spray (group lồng nhau)
-  const headContent = `
+  // ĐẦU — xoay theo vector heading; râu + lửa
+  const head = `
   <path d="M-4 -9 C -12 -17 -22 -18 -28 -12" stroke="${DRAGON.line}" stroke-width="2.4" fill="none" stroke-linecap="round"/>
   <path d="M0 -10 C -6 -18 -14 -20 -20 -17" stroke="${DRAGON.line}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
   <g>
@@ -475,10 +448,7 @@ function dragonRiders(show: Show, seed: number): string {
       </path>
     </g>
   </g>`;
-  segs.push(
-    `<g><animateMotion ${segMotion(chain[0], dt, total)}/>` +
-    `<g transform="scale(${DRAGON.scale})">${OPACITY}<g>${ROT}<g>${FLIP}${headContent}</g></g></g></g>`
-  );
+  segs.push(rider(0, head));
 
   return segs.join("");
 }
@@ -560,7 +530,7 @@ export function renderDragon(cal: Calendar, theme: Theme, opts: { showCount?: bo
     );
   }
 
-  parts.push(dragonRiders(show, seed));
+  parts.push(dragonRiders(show));
 
   const pad = GEO.pitch * 2;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-pad} ${-pad} ${width + pad * 2} ${height + pad * 2}" width="100%" fill="none" role="img" aria-label="Contribution dragon — ${total} contributions in the last year">${parts.join("")}</svg>`;
