@@ -1,3 +1,4 @@
 node_modules/
 *.log
+debug/
 demo/t.svg

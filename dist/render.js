@@ -10,6 +10,7 @@ const DRAGON = {
 };
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 const f = (n) => Math.round(n * 1000) / 1000;
+const lerpPt = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
 function mulberry32(seed) {
     return () => {
         seed |= 0;
@@ -29,7 +30,7 @@ function shuffle(arr, rnd) {
 }
 const rotFor = (d) => (d.y === 1 ? 90 : d.y === -1 ? -90 : 0);
 const flipFor = (d) => (d.x === -1 ? -1 : 1);
-function buildShow(cal, seed) {
+export function buildShow(cal, seed) {
     const rnd = mulberry32(seed);
     const { width, cols, rows } = gridSize(cal);
     const center = { x: width / 2, y: GEO.top + (rows * GEO.pitch) / 2 };
@@ -65,27 +66,30 @@ function buildShow(cal, seed) {
         const ox = origin.x - center.x, oy = origin.y - center.y;
         const ol = Math.max(1, Math.hypot(ox, oy));
         const arrival = { x: origin.x + (ox / ol) * GEO.pitch * 1.4, y: origin.y + (oy / ol) * GEO.pitch * 1.4 };
-        // GLIDE: trượt ngẫu nhiên qua 11–14 ô, kết thúc tại origin
-        const want = 11 + Math.floor(rnd() * 4);
-        const trail = [{ ...origin }];
-        let p = { ...origin };
-        let guard = 0;
-        while (trail.length < want && guard++ < 80) {
-            const dirs4 = shuffle([{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }], rnd);
-            const d = dirs4.find(d => {
-                const n = { x: p.x + d.x * GEO.pitch, y: p.y + d.y * GEO.pitch };
-                return inGrid(n) && !trail.some(t => t.x === n.x && t.y === n.y);
-            }) ?? dirs4.find(d => {
-                const n = { x: p.x + d.x * GEO.pitch, y: p.y + d.y * GEO.pitch };
-                const prev = trail[trail.length - 2];
-                return inGrid(n) && (!prev || !(n.x === prev.x && n.y === prev.y));
-            });
-            if (!d)
-                break;
-            p = { x: p.x + d.x * GEO.pitch, y: p.y + d.y * GEO.pitch };
-            trail.push({ ...p });
+        // GLIDE: S-curve sweep qua 11–14 ô — trượt theo một hướng trôi (drift)
+        // với wobble vuông góc hình sin, kết thúc CHÍNH XÁC tại origin
+        const want = 11 + Math.floor(rnd() * 4); // 11–14 điểm
+        const driftAng = Math.atan2(arrival.y - origin.y, arrival.x - origin.x) + (rnd() - 0.5) * 0.9;
+        const drift = { x: Math.cos(driftAng), y: Math.sin(driftAng) };
+        const perp = { x: -drift.y, y: drift.x };
+        const clampIn = (pt) => ({
+            x: Math.min(width - GEO.marginX + GEO.pitch * 0.5, Math.max(GEO.marginX - GEO.pitch * 0.5, pt.x)),
+            y: Math.min(GEO.top + 6 * GEO.pitch + GEO.pitch * 0.5, Math.max(GEO.top - GEO.pitch * 0.5, pt.y)),
+        });
+        const startRaw = {
+            x: origin.x - drift.x * want * GEO.pitch * 0.8,
+            y: origin.y - drift.y * want * GEO.pitch * 0.8,
+        };
+        const start = clampIn(startRaw);
+        const wobbleSign = rnd() < 0.5 ? 1 : -1;
+        const trail = [{ ...start }];
+        for (let i = 1; i < want - 1; i++) {
+            const k = i / (want - 1);
+            const base = lerpPt(start, origin, k);
+            const wobble = Math.sin(k * Math.PI * 2.2) * GEO.pitch * 1.15 * wobbleSign;
+            trail.push(clampIn({ x: base.x + perp.x * wobble, y: base.y + perp.y * wobble }));
         }
-        trail.reverse(); // đầu = xa origin nhất, cuối = origin (mũi phun)
+        trail.push({ ...origin });
         const order = [d0, ...shuffle(allDirs.filter(d => d !== d0), rnd)];
         const dirCount = 1 + Math.floor(rnd() * 4); // xoay ngẫu nhiên 1–4 hướng
         const dirs = order.slice(0, dirCount).map(d => ({ d, len: 1 + Math.floor(rnd() * 3), rot: rotFor(d), flip: flipFor(d) }));
@@ -129,7 +133,6 @@ function buildShow(cal, seed) {
         phases.push({ t0: t, t1: t + spinDur, from: plan.arrival, to: plan.arrival, kind: "fadein", visible: true,
             rotEnd: rot, flipEnd: flip, spinEnd: spinAngle, spinning: doSpin });
         t += spinDur;
-        // SLIDE qua 11–14 ô của glide
         let prev = plan.arrival;
         for (const g of plan.glide) {
             push("move", prev, g, 0.3, rot, flip);
@@ -139,7 +142,7 @@ function buildShow(cal, seed) {
             push("rotate", plan.origin, plan.origin, 0.14, rEnd, fEnd);
             push("spray", plan.origin, plan.origin, 0.7 + len * 0.18, rEnd, fEnd);
             phases[phases.length - 1].len = len;
-            // ĐỐT TOÀN BỘ ĐƯỜNG LỬA (mọi ô trong tầm 1..len — ô có màu mòn về trống hoàn toàn)
+            // đốt toàn bộ đường lửa: mọi ô trong tầm 1..len
             for (let k = 1; k <= len; k++) {
                 const cell = { x: plan.origin.x + d.x * GEO.pitch * k, y: plan.origin.y + d.y * GEO.pitch * k };
                 if (!inGrid(cell))
@@ -177,54 +180,221 @@ function buildShow(cal, seed) {
     return { phases, total: t, pathD, pathLen, burns };
 }
 // ============================================================
-// sampling
+// vector head + chain simulation (rope constraint)
 // ============================================================
-function distanceAt(show, segLens, t) {
-    const T = show.total;
-    const tt = ((t % T) + T) % T;
-    let d = 0;
-    for (let i = 0; i < show.phases.length; i++) {
-        const ph = show.phases[i];
-        if (tt <= ph.t1) {
-            if (ph.kind === "move" || ph.kind === "walk" || ph.kind === "slide") {
-                const k = (tt - ph.t0) / Math.max(0.0001, ph.t1 - ph.t0);
-                return d + segLens[i] * k;
-            }
-            return d;
-        }
-        d += segLens[i];
-    }
-    return d;
-}
-function opacityAt(phases, t) {
+/** Vị trí ĐẦU rồng tại thời điểm t — nội suy tuyến tính trong phase. */
+function headPositionAt(phases, t) {
     const T = phases[phases.length - 1].t1;
     const tt = ((t % T) + T) % T;
     for (const ph of phases) {
         if (tt >= ph.t0 && tt <= ph.t1) {
             const k = (tt - ph.t0) / Math.max(0.0001, ph.t1 - ph.t0);
-            if (ph.kind === "fadeout")
-                return 1 - k;
-            if (ph.kind === "fadein")
-                return k;
-            if (ph.kind === "slide")
-                return 0;
-            return 1;
+            return lerpPt(ph.from, ph.to, k);
         }
     }
-    return 1;
+    return phases[phases.length - 1].to;
 }
-/** knot list (t, giá trị) cho kênh có bước NHẢY (flip) — chèn cặp ε tại mốc đổi giá trị. */
-function snapChannel(phases, pickEnd) {
-    const knots = [{ t: 0, v: pickEnd(phases[0]) }];
-    for (let i = 0; i < phases.length; i++) {
-        const v = pickEnd(phases[i]);
-        const prev = knots[knots.length - 1].v;
-        if (v !== prev) {
-            knots.push({ t: phases[i].t0 - 0.001, v: prev });
-            knots.push({ t: phases[i].t0, v });
+/**
+ * Mô phỏng chuỗi đuôi: seg[0] = đầu (vector vị trí + heading), seg[k] bám
+ * seg[k-1] với khoảng cách cố định (rope constraint) — đốt sau nối đuôi
+ * vào đốt trước theo đúng quỹ đạo lịch sử. Khởi đầu tất cả stacked tại
+ * điểm xuất phát → thân "mọc ra" khi đầu bay; snap ở vòng lặp xảy ra trong
+ * lúc tàng hình nên không thấy.
+ */
+export function simulateChain(phases, total, dt, spacing, segCount) {
+    const n = Math.floor(total / dt); // không vượt quá total — keyTimes phải đơn điệu
+    const head = [];
+    for (let i = 0; i <= n; i++)
+        head.push(headPositionAt(phases, i * dt));
+    head.push(headPositionAt(phases, total)); // sample cuối đúng mốc kết thúc chu kỳ
+    const chain = [head];
+    for (let k = 1; k < segCount; k++) {
+        const leader = chain[k - 1];
+        const seg = [{ ...leader[0] }];
+        for (let i = 1; i <= n; i++) {
+            const L = leader[i];
+            const c = seg[i - 1];
+            const dx = c.x - L.x, dy = c.y - L.y;
+            const len = Math.hypot(dx, dy);
+            if (len < 0.001) {
+                seg.push({ ...L });
+                continue;
+            }
+            seg.push({ x: L.x + (dx / len) * spacing, y: L.y + (dy / len) * spacing });
+        }
+        chain.push(seg);
+    }
+    return { samples: chain, dt, n };
+}
+/** Hướng đầu (độ, chuẩn hóa [-90,90]) + lật gương — từ vector vận tốc. */
+function headingChannel(samples, dt, sampleEvery) {
+    const n = samples.length - 1;
+    const step = Math.max(1, Math.round(sampleEvery / dt));
+    const angles = [], flips = [], kts = [];
+    let lastAngle = 0, lastFlip = 1;
+    for (let i = 0; i <= n; i += step) {
+        const j = Math.min(n, i + step);
+        const dx = samples[j].x - samples[i].x;
+        const dy = samples[j].y - samples[i].y;
+        if (Math.hypot(dx, dy) > 1.2) {
+            let a = (Math.atan2(dy, dx) * 180) / Math.PI;
+            let fl = 1;
+            if (a > 90 || a < -90) {
+                a += a > 0 ? -180 : 180;
+                fl = -1;
+            }
+            lastAngle = a;
+            lastFlip = fl;
+        }
+        angles.push(f(lastAngle));
+        flips.push(lastFlip);
+        kts.push(f(i / n));
+    }
+    if (kts[kts.length - 1] < 0.9999) {
+        kts.push(1);
+        angles.push(f(lastAngle));
+        flips.push(lastFlip);
+    }
+    return { angles, flips, kts };
+}
+/** knot channel có bước NHẢY (flip đổi dấu) — chèn cặp ε tại mốc đổi. */
+function snapEmit(kts, vals, fmt) {
+    const outV = [], outK = [];
+    for (let i = 0; i < kts.length; i++) {
+        if (i > 0 && vals[i] !== vals[i - 1]) {
+            outV.push(fmt(vals[i - 1]));
+            outK.push(f(Math.max(0, kts[i] - 0.003)));
+            outV.push(fmt(vals[i]));
+            outK.push(f(kts[i]));
+        }
+        else {
+            outV.push(fmt(vals[i]));
+            outK.push(f(kts[i]));
         }
     }
-    return knots;
+    if (outK[0] > 0.0001) {
+        outK.unshift(0);
+        outV.unshift(outV[outV.length - 1]);
+    }
+    if (outK[outK.length - 1] < 0.9999) {
+        outK.push(1);
+        outV.push(outV[outV.length - 1]);
+    }
+    return `values="${outV.join(";")}" keyTimes="${outK.join(";")}"`;
+}
+function linEmit(kts, vals, fmt) {
+    return `values="${vals.map(v => fmt(v)).join(";")}" keyTimes="${kts.map(k => f(k)).join(";")}"`;
+}
+/** path + keyTimes/keyPoints cho MỘT đốt từ sample vị trí của nó. */
+function segMotion(samples, dt, total) {
+    const pts = [], times = [];
+    for (let i = 0; i < samples.length; i++) {
+        const p = samples[i];
+        if (i === 0 || dist(p, samples[i - 1]) > 0.02) {
+            pts.push(p);
+            times.push(i * dt);
+        }
+    }
+    if (pts.length === 1)
+        pts.push({ x: pts[0].x + 0.01, y: pts[0].y });
+    let d = `M ${f(pts[0].x)} ${f(pts[0].y)}`;
+    let len = 0;
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) {
+        len += dist(pts[i - 1], pts[i]);
+        cum.push(len);
+        d += ` L ${f(pts[i].x)} ${f(pts[i].y)}`;
+    }
+    if (len < 0.01)
+        len = 0.01;
+    const kts = times.map(tt => f((((tt % total) + total) % total) / total));
+    const kps = cum.map(c => f(Math.min(1, c / len)));
+    return `path="${d}" keyPoints="${kps.join(";")}" keyTimes="${kts.join(";")}" calcMode="linear"`;
+}
+// ============================================================
+// dragon assembly
+// ============================================================
+function dragonRiders(show, seed) {
+    const total = show.total;
+    const dt = 0.15;
+    const spacing = 8.5;
+    const segCount = 11; // đầu + 9 đốt thân + đốt đuôi
+    const chainSim = simulateChain(show.phases, total, dt, spacing, segCount);
+    const chain = chainSim.samples;
+    const bounds = [0, ...show.phases.map(p => p.t1)];
+    const OPACITY = `<animate attributeName="opacity" ${linEmit(bounds.map(b => b / total), bounds.map(b => f(opacityAt(show.phases, b))), v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
+    // heading của đầu — từ vector vận tốc (định nghĩa vector của đầu)
+    const { angles, flips, kts: hKts } = headingChannel(chain[0], dt, 0.3);
+    const ROT = `<animateTransform attributeName="transform" type="rotate" ${linEmit(hKts, angles, v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
+    const FLIP = `<animateTransform attributeName="transform" type="scale" ${snapEmit(hKts, flips, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
+    // đuôi lửa — dài theo len của từng pha spray
+    const flameKnots = [{ t: 0, v: 1 }];
+    for (const ph of show.phases) {
+        if (ph.kind !== "spray" || !ph.len)
+            continue;
+        const ext = 0.9 + (ph.len - 1) * 0.62;
+        flameKnots.push({ t: ph.t0 - 0.002, v: 1 });
+        flameKnots.push({ t: ph.t0 + 0.1, v: ext });
+        flameKnots.push({ t: ph.t1 - 0.002, v: ext });
+        flameKnots.push({ t: ph.t1, v: 1 });
+    }
+    const FLAME = `<animateTransform attributeName="transform" type="scale" ${emitChannel(flameKnots, total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
+    const segs = [];
+    // thân: đốt 1..9 — circle KHÔNG viền (chồng khít thành thân liền) + gai hướng lên
+    const radii = [10, 9.5, 9, 8.4, 7.7, 7, 6.3, 5.6, 4.9];
+    for (let k = radii.length; k >= 1; k--) {
+        const r = radii[k - 1];
+        const spike = k <= 5
+            ? `<polygon points="0,${-r + 1} 3.4,${-r - 5.5} -3.4,${-r - 5.5}" fill="${DRAGON.spike}" opacity="0.95"/>`
+            : "";
+        segs.push(`<g><animateMotion ${segMotion(chain[k], dt, total)}/>` +
+            `<g transform="scale(${DRAGON.scale})">${OPACITY}${spike}<circle r="${r}" fill="${k % 2 === 0 ? DRAGON.body : DRAGON.shade}"/></g></g>`);
+    }
+    // cánh trên đốt 3
+    segs.push(`<g><animateMotion ${segMotion(chain[3], dt, total)}/>` +
+        `<g transform="scale(${DRAGON.scale})">${OPACITY}` +
+        `<g opacity="0.5"><path d="M2 -8 C -10 -24 -27 -30 -35 -24 C -27 -19 -17 -13 -5 -7 Z" fill="${DRAGON.shade}">` +
+        `<animateTransform attributeName="transform" type="rotate" values="-13 0 -5;13 0 -5;-13 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g>` +
+        `<path d="M0 -7 C -11 -20 -25 -24 -31 -18 C -23 -13 -13 -9 -4 -5 Z" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.4">` +
+        `<animateTransform attributeName="transform" type="rotate" values="11 0 -5;-15 0 -5;11 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g></g>`);
+    // đuôi: vây trên đốt cuối
+    segs.push(`<g><animateMotion ${segMotion(chain[segCount - 1], dt, total)}/>` +
+        `<g transform="scale(${DRAGON.scale})">${OPACITY}` +
+        `<polygon points="-6,0 4,-4.5 4,4.5" fill="${DRAGON.spike}" opacity="0.9"/></g></g>`);
+    // ĐẦU — xoay theo vector heading; lửa dài theo pha spray (group lồng nhau)
+    const headContent = `
+  <path d="M-4 -9 C -12 -17 -22 -18 -28 -12" stroke="${DRAGON.line}" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+  <path d="M0 -10 C -6 -18 -14 -20 -20 -17" stroke="${DRAGON.line}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="-5 24 0;6 24 0;-5 24 0" dur="2.4s" repeatCount="indefinite"/>
+    <path d="M26 -2 C 34 -8 44 -6 52 -12 C 56 -15 60 -14 63 -16" stroke="${DRAGON.line}" stroke-width="1.7" fill="none" stroke-linecap="round"/>
+    <path d="M27 3 C 35 7 43 5 50 10 C 54 13 58 12 62 14" stroke="${DRAGON.line}" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.8"/>
+  </g>
+  <path d="M-7 -7 L 3 -9" stroke="${DRAGON.line}" stroke-width="1.6" stroke-linecap="round"/>
+  <polygon points="5,5 20,9 7,14" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.6"/>
+  <polygon points="9,7 12,9.5 10,10" fill="${DRAGON.glow}" opacity="0.9"/>
+  <polygon points="14,8.2 17,10.5 15,11" fill="${DRAGON.glow}" opacity="0.9"/>
+  <polygon points="6,-8 24,-3 24,3 6,6" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.8"/>
+  <ellipse cx="-4" cy="0" rx="15" ry="11.5" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.8"/>
+  <polygon points="10,0 22,1 22,2.5 10,3.5" fill="${DRAGON.line}"/>
+  <circle cx="20" cy="0" r="1" fill="${DRAGON.line}"/>
+  <circle cx="-2" cy="-4" r="3" fill="${DRAGON.glow}"/>
+  <circle cx="-1" cy="-4.9" r="1.05" fill="${DRAGON.line}"/>
+  <g>
+    ${FLAME}
+    <g>
+      <animateTransform attributeName="transform" type="translate" values="28 2;31 2;28 2" dur="0.5s" repeatCount="indefinite"/>
+      <path d="M0 0 C 8 -2 14 -6 20 -5 C 15 -1 14 3 9 6 C 5 7 2 4 0 0 Z" fill="#F97316" opacity="0.95">
+        <animate attributeName="opacity" values="0.95;0.55;0.95" dur="0.4s" repeatCount="indefinite"/>
+      </path>
+      <path d="M0 0 C 6 -1 10 -3 14 -3 C 11 1 10 3 6 5 C 3 5 1 3 0 0 Z" fill="#FDE68A">
+        <animate attributeName="opacity" values="1;0.5;1" dur="0.35s" repeatCount="indefinite"/>
+      </path>
+    </g>
+  </g>`;
+    segs.push(`<g><animateMotion ${segMotion(chain[0], dt, total)}/>` +
+        `<g transform="scale(${DRAGON.scale})">${OPACITY}<g>${ROT}<g>${FLIP}${headContent}</g></g></g></g>`);
+    return segs.join("");
 }
 function emitChannel(knots, total, fmt) {
     const T = total;
@@ -245,185 +415,39 @@ function emitChannel(knots, total, fmt) {
         pts.push({ kt: 1, v: pts[0].v });
     return `values="${pts.map(p => fmt(p.v)).join(";")}" keyTimes="${pts.map(p => f(p.kt)).join(";")}"`;
 }
-// ============================================================
-// dragon
-// ============================================================
-function dragonRiders(show) {
-    const segLens = show.phases.map(p => (p.kind === "move" || p.kind === "walk" || p.kind === "slide") ? dist(p.from, p.to) : 0);
-    const total = show.total;
-    const bounds = [0, ...show.phases.map(p => p.t1)];
-    // opacity — fade mượt theo phase (linear tại ranh giới là đúng)
-    const OPACITY = `<animate attributeName="opacity" ${emitChannel(bounds.map(b => ({ t: b, v: opacityAt(show.phases, b) })), total, v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
-    // xoay — quay mượt trong pha rotate (0.14s)
-    const ROT = `<animateTransform attributeName="transform" type="rotate" ${emitChannel(bounds.map(b => ({ t: b, v: f(scalarRotAt(show.phases, b)) })), total, v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
-    // lật ngang — NHẢY qua squish 0 tại mốc đổi hướng
-    const FLIP = `<animateTransform attributeName="transform" type="scale" ${emitChannel(snapChannel(show.phases, p => p.flipEnd), total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
-    // đuôi lửa — dài ra theo len của từng pha spray (1–3 ô)
-    const flameKnots = [{ t: 0, v: 1 }];
-    for (const ph of show.phases) {
-        if (ph.kind !== "spray" || !ph.len)
-            continue;
-        const ext = 0.9 + (ph.len - 1) * 0.62;
-        flameKnots.push({ t: ph.t0 - 0.002, v: 1 });
-        flameKnots.push({ t: ph.t0 + 0.1, v: ext });
-        flameKnots.push({ t: ph.t1 - 0.002, v: ext });
-        flameKnots.push({ t: ph.t1, v: 1 });
-    }
-    const FLAME = `<animateTransform attributeName="transform" type="scale" ${emitChannel(flameKnots, total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
-    // spin-in — xoay tròn 360° khi biến tới (grand entrance)
-    const SPIN = `<animateTransform attributeName="transform" type="rotate" ${emitChannel(bounds.map(b => ({ t: b, v: f(scalarSpinAt(show.phases, b)) })), total, v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
-    // rider chính — keyframes lấy tại ranh giới phase
-    const kts = [], kps = [];
-    const seen = new Set();
-    for (const b of bounds) {
-        const lt = (((b % total) + total) % total) / total;
-        const key = lt.toFixed(4);
-        if (seen.has(key))
-            continue;
-        seen.add(key);
-        kts.push(f(lt));
-        kps.push(f(Math.min(1, distanceAt(show, segLens, b) / show.pathLen)));
-    }
-    kts.sort((a, b) => a - b);
-    const sortedPairs = kts.map(kt => ({ kt, kp: kps[kts.indexOf(kt)] })).sort((a, b) => a.kt - b.kt);
-    if (sortedPairs[0].kt > 0.0001)
-        sortedPairs.unshift({ kt: 0, kp: sortedPairs[sortedPairs.length - 1].kp });
-    if (sortedPairs[sortedPairs.length - 1].kt < 0.9999)
-        sortedPairs.push({ kt: 1, kp: sortedPairs[0].kp });
-    // ===== sprite rigid =====
-    const body = `
-  <path d="M -6 -9
-           C -20 -15 -30 -4 -44 -10
-           C -56 -15 -64 -5 -78 -13
-           L -88 -16
-           L -80 -6
-           C -68 -1 -58 -5 -46 1
-           C -33 6 -19 -1 -6 8 Z"
-        fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.7"/>
-  <path d="M -86 -16 C -94 -20 -98 -18 -103 -22 C -97 -13 -97 -11 -90 -6 Z" fill="${DRAGON.spike}" opacity="0.9"/>
-  <polygon points="-16,-12 -12,-18 -8,-11" fill="${DRAGON.spike}" opacity="0.95"/>
-  <polygon points="-30,-10 -26,-16 -22,-9" fill="${DRAGON.spike}" opacity="0.9"/>
-  <polygon points="-46,-12 -42,-18 -38,-11" fill="${DRAGON.spike}" opacity="0.85"/>
-  <polygon points="-62,-12 -58,-18 -54,-11" fill="${DRAGON.spike}" opacity="0.8"/>
-  <path d="M -10 6 C -22 2 -32 6 -44 0 C -34 -1 -22 -3 -10 3 Z" fill="${DRAGON.glow}" opacity="0.25"/>
-  <g opacity="0.5">
-    <path d="M -14 -8 C -22 -24 -36 -30 -44 -25 C -38 -19 -28 -13 -16 -7 Z" fill="${DRAGON.shade}">
-      <animateTransform attributeName="transform" type="rotate" values="-13 -12 -6;13 -12 -6;-13 -12 -6" dur="0.72s" repeatCount="indefinite"/>
-    </path>
-  </g>
-  <path d="M -12 -7 C -20 -19 -32 -22 -38 -17 C -31 -12 -22 -8 -13 -5 Z" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.4">
-    <animateTransform attributeName="transform" type="rotate" values="11 -11 -5;-15 -11 -5;11 -11 -5" dur="0.72s" repeatCount="indefinite"/>
-  </path>`;
-    // đầu v2: râu dài đu đưa, lông mày, răng, sừng kép
-    const head = `
-  <path d="M-4 -9 C -12 -17 -22 -18 -28 -12" stroke="${DRAGON.line}" stroke-width="2.4" fill="none" stroke-linecap="round"/>
-  <path d="M0 -10 C -6 -18 -14 -20 -20 -17" stroke="${DRAGON.line}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
-  <path d="M24 -1 C 30 -3 34 0 38 -2" stroke="${DRAGON.line}" stroke-width="1.3" fill="none" opacity="0.8"/>
-  <g>
-    <animateTransform attributeName="transform" type="rotate" values="-5 24 0;6 24 0;-5 24 0" dur="2.4s" repeatCount="indefinite"/>
-    <path d="M26 -2 C 34 -8 44 -6 52 -12 C 56 -15 60 -14 63 -16" stroke="${DRAGON.line}" stroke-width="1.7" fill="none" stroke-linecap="round"/>
-    <path d="M27 3 C 35 7 43 5 50 10 C 54 13 58 12 62 14" stroke="${DRAGON.line}" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.8"/>
-  </g>
-  <path d="M-7 -7 L 3 -9" stroke="${DRAGON.line}" stroke-width="1.6" stroke-linecap="round"/>
-  <polygon points="5,5 20,9 7,14" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.6"/>
-  <polygon points="9,7 12,9.5 10,10" fill="${DRAGON.glow}" opacity="0.9"/>
-  <polygon points="14,8.2 17,10.5 15,11" fill="${DRAGON.glow}" opacity="0.9"/>
-  <polygon points="6,-8 24,-3 24,3 6,6" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.8"/>
-  <ellipse cx="-4" cy="0" rx="15" ry="11.5" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.8"/>
-  <polygon points="10,0 22,1 22,2.5 10,3.5" fill="${DRAGON.line}"/>
-  <circle cx="20" cy="0" r="1" fill="${DRAGON.line}"/>
-  <circle cx="-2" cy="-4" r="3" fill="${DRAGON.glow}"/>
-  <circle cx="-1" cy="-4.9" r="1.05" fill="${DRAGON.line}"/>
-  <g>
-    <animateTransform attributeName="transform" type="scale" ${emitChannel((() => {
-        const knots = [{ t: 0, v: 1 }];
-        for (const ph of show.phases) {
-            if (ph.kind !== "spray" || !ph.len)
-                continue;
-            const ext = 0.9 + (ph.len - 1) * 0.62;
-            knots.push({ t: ph.t0 - 0.002, v: 1 });
-            knots.push({ t: ph.t0 + 0.1, v: ext });
-            knots.push({ t: ph.t1 - 0.002, v: ext });
-            knots.push({ t: ph.t1, v: 1 });
-        }
-        return knots;
-    })(), total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>
-    <g>
-      <animateTransform attributeName="transform" type="translate" values="28 2;31 2;28 2" dur="0.5s" repeatCount="indefinite"/>
-      <path d="M0 0 C 8 -2 14 -6 20 -5 C 15 -1 14 3 9 6 C 5 7 2 4 0 0 Z" fill="#F97316" opacity="0.95">
-        <animate attributeName="opacity" values="0.95;0.55;0.95" dur="0.4s" repeatCount="indefinite"/>
-      </path>
-      <path d="M0 0 C 6 -1 10 -3 14 -3 C 11 1 10 3 6 5 C 3 5 1 3 0 0 Z" fill="#FDE68A">
-        <animate attributeName="opacity" values="1;0.5;1" dur="0.35s" repeatCount="indefinite"/>
-      </path>
-    </g>
-  </g>`;
-    // một rider duy nhất mang cả con rồng
-    return `<g><animateMotion dur="${f(total)}s" repeatCount="indefinite" path="${show.pathD}" keyPoints="${sortedPairs.map(p => f(p.kp)).join(";")}" keyTimes="${sortedPairs.map(p => f(p.kt)).join(";")}" calcMode="linear"/><g transform="scale(${DRAGON.scale})">${OPACITY}<g>${ROT}<g>${SPIN}<g>${FLIP}${body}${head}</g></g></g></g></g>`;
-}
-function scalarSpinAt(phases, t) {
+function opacityAt(phases, t) {
     const T = phases[phases.length - 1].t1;
     const tt = ((t % T) + T) % T;
-    for (let i = 0; i < phases.length; i++) {
-        const ph = phases[i];
+    for (const ph of phases) {
         if (tt >= ph.t0 && tt <= ph.t1) {
-            const prev = phases[(i - 1 + phases.length) % phases.length].spinEnd ?? 0;
-            const end = ph.spinEnd ?? prev;
             const k = (tt - ph.t0) / Math.max(0.0001, ph.t1 - ph.t0);
-            return ph.spinning ? prev + (end - prev) * k : end;
+            if (ph.kind === "fadeout")
+                return 1 - k;
+            if (ph.kind === "fadein")
+                return k;
+            if (ph.kind === "slide")
+                return 0;
+            return 1;
         }
     }
-    return 0;
-}
-function scalarRotAt(phases, t) {
-    const T = phases[phases.length - 1].t1;
-    const tt = ((t % T) + T) % T;
-    for (let i = 0; i < phases.length; i++) {
-        const ph = phases[i];
-        if (tt >= ph.t0 && tt <= ph.t1) {
-            const prev = phases[(i - 1 + phases.length) % phases.length].rotEnd;
-            const k = (tt - ph.t0) / Math.max(0.0001, ph.t1 - ph.t0);
-            return ph.kind === "rotate" ? prev + (ph.rotEnd - prev) * k : ph.rotEnd;
-        }
-    }
-    return 0;
+    return 1;
 }
 export function renderDragon(cal, theme, opts = {}) {
     const { width, height, cols } = gridSize(cal);
-    const total = cal.weeks.flat().reduce((s, d) => s + d.count, 0);
+    const total = cal.weeks.flat().reduce((s2, d) => s2 + d.count, 0);
     const seed = opts.seed ?? 20261025;
     const show = buildShow(cal, seed);
     const parts = [];
-    // ===== bảng contribution — ô bị rồng phun sẽ TỪ TỪ mất màu (gần trước, xa sau) =====
-    const burnMap = new Map();
-    for (const b of show.burns) {
-        const key = `${b.col},${b.row}`;
-        if (!burnMap.has(key))
-            burnMap.set(key, b); // lần đốt sớm nhất thắng
-    }
+    // ===== bảng contribution =====
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < 7; r++) {
             const day = cal.weeks[c][r];
             const x = GEO.marginX + c * GEO.pitch;
             const y = GEO.top + r * GEO.pitch;
-            const burn = burnMap.get(`${c},${r}`);
-            const T = show.total;
-            const orig = day.level === 0 ? theme.empty : theme.levels[day.level - 1];
-            // state machine: INTACT → BURNING (flame icon 0.5s) → SCORCHED (than cháy)
-            const iS = burn ? burn.t / T : 0; // bốc cháy
-            const iM = burn ? Math.min(0.999, (burn.t + 0.5) / T) : 0; // lửa tắt
-            const iE = burn ? Math.min(0.999, (burn.t + 0.85) / T) : 0; // mòn màu xong
             if (day.level === 4) {
-                const glowFade = burn
-                    ? `<animate attributeName="opacity" values="0.16;0.16;0.1;0;0" keyTimes="0;${f(iS)};${f(iM)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
-                    : "";
-                parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16">${glowFade}</rect>`);
+                parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16"/>`);
             }
-            // giữ màu nguyên trong lúc lửa cháy trên ô, rồi mòn về SCORCHED
-            const fillAnim = burn
-                ? `<animate attributeName="fill" values="${orig};${orig};${orig};${theme.scorch};${theme.scorch}" keyTimes="0;${f(iS)};${f(iM)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
-                : "";
-            parts.push(`<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${orig}">${fillAnim}</rect>`);
+            parts.push(`<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${day.level === 0 ? theme.empty : theme.levels[day.level - 1]}"/>`);
         }
         const first = cal.weeks[c][0]?.date ?? "";
         if (first.endsWith("-01") && c < cols - 1) {
@@ -433,32 +457,18 @@ export function renderDragon(cal, theme, opts = {}) {
     if (opts.showCount !== false) {
         parts.push(`<text x="${width - GEO.marginX}" y="${GEO.top - 9}" text-anchor="end" font-family="${FONT}" font-size="10" fill="${theme.label}">${total} contributions — last year</text>`);
     }
-    // ===== BURNING phase: biểu tượng lửa cháy trên ô trong 0.5s =====
+    // ===== vòng ignition trắng khi lửa chạm ô =====
     const T = show.total;
     for (const b of show.burns) {
         const start = ((b.t % T) + T) % T;
-        const kts = [0];
-        const ops = [0];
-        const scs = ["0.3 0.3"];
-        const steps = 5;
-        for (let i = 0; i <= steps; i++) {
-            const tt = start + (i / steps) * 0.5;
-            kts.push(f(Math.min(0.999, tt / T)));
-            ops.push(f(i === 0 ? 0.4 : (i % 2 === 1 ? 1 : 0.6)));
-            const sc = 0.55 + (i / steps) * 0.75 + (i % 2 === 1 ? 0.1 : 0);
-            scs.push(`${f(sc)} ${f(sc)}`);
-        }
-        kts.push(1);
-        ops.push(0);
-        scs.push("0.3 0.3");
-        parts.push(`<g transform="translate(${f(b.x)},${f(b.y)})" opacity="0">` +
-            `<animate attributeName="opacity" values="${ops.join(";")}" keyTimes="${kts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>` +
-            `<g><animateTransform attributeName="transform" type="scale" values="${scs.join(";")}" keyTimes="${kts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>` +
-            `<path d="M0 3.4 C -3.4 1.2 -2.2 -2.2 0 -4.4 C 1.1 -2.2 3.3 -1.1 2.9 1.1 C 2.6 2.6 1.1 3.4 0 3.4 Z" fill="#F97316"/>` +
-            `<path d="M0 3.4 C -1.3 2 -0.9 0.4 0 -0.9 C 0.9 0.2 1.5 1.1 1.1 2.2 C 0.9 2.8 0.4 3.4 0 3.4 Z" fill="#FDE68A"/>` +
-            `</g></g>`);
+        const a = f(start / T);
+        const b2 = f(Math.min(0.999, (start + 0.07) / T));
+        const c2 = f(Math.min(0.999, (start + 0.3) / T));
+        parts.push(`<circle cx="${f(b.x)}" cy="${f(b.y)}" r="5" fill="none" stroke="${DRAGON.glow}" stroke-width="2" opacity="0">` +
+            `<animate attributeName="opacity" values="0;0;0.85;0;0" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/>` +
+            `<animate attributeName="r" values="4;4;9;12;4" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/></circle>`);
     }
-    parts.push(dragonRiders(show));
+    parts.push(dragonRiders(show, seed));
     const pad = GEO.pitch * 2;
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-pad} ${-pad} ${width + pad * 2} ${height + pad * 2}" width="100%" fill="none" role="img" aria-label="Contribution dragon — ${total} contributions in the last year">${parts.join("")}</svg>`;
 }
