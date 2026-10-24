@@ -48,14 +48,14 @@ interface Phase {
   len?: number;        // tầm lửa của pha spray (1–3 ô)
 }
 
-interface Pulse { x: number; y: number; t: number }
+interface Burn { col: number; row: number; x: number; y: number; level: 0|1|2|3|4; t: number }
 
 interface Show {
   phases: Phase[];
   total: number;
   pathD: string;
   pathLen: number;
-  pulses: Pulse[];
+  burns: Burn[];
 }
 
 const rotFor = (d: Pt) => (d.y === 1 ? 90 : d.y === -1 ? -90 : 0);
@@ -107,7 +107,8 @@ function buildShow(cal: Calendar, seed: number): Show {
 
     // 4 hướng xoay: bắt đầu từ hướng chọn rồi quay lần lượt
     const order = [d0, ...shuffle(allDirs.filter(d => d !== d0), rnd)];
-    const dirs = order.map(d => ({ d, len: 1 + Math.floor(rnd() * 3), rot: rotFor(d), flip: flipFor(d) }));
+    const dirCount = 1 + Math.floor(rnd() * 4);   // xoay ngẫu nhiên 1–4 hướng
+    const dirs = order.slice(0, dirCount).map(d => ({ d, len: 1 + Math.floor(rnd() * 3), rot: rotFor(d), flip: flipFor(d) }));
 
     // đi bộ ngẫu nhiên 2–4 bước (có thể ra ngoài boundary 1 ô)
     const walks: Pt[] = [];
@@ -129,7 +130,7 @@ function buildShow(cal: Calendar, seed: number): Show {
 
   // ===== phát phases =====
   const phases: Phase[] = [];
-  const pulses: Pulse[] = [];
+  const burns: Burn[] = [];
   const vertices: Pt[] = [plans[0].arrival];
   let t = 0;
   let rot = 0, flip = 1;
@@ -156,12 +157,14 @@ function buildShow(cal: Calendar, seed: number): Show {
         if (!inGrid(cell)) continue;
         const col = Math.round((cell.x - GEO.marginX - GEO.cell / 2) / GEO.pitch);
         const row = Math.round((cell.y - GEO.top - GEO.cell / 2) / GEO.pitch);
-        if (cal.weeks[col]?.[row]?.level === 0) continue;
-        pulses.push({ x: cell.x, y: cell.y, t: t - (0.7 + len * 0.18) + 0.2 + (k - 1) * 0.24 });
+        const day = cal.weeks[col]?.[row];
+        if (!day || day.level === 0) continue;
+        burns.push({ col, row, x: cell.x, y: cell.y, level: day.level, t: t - (0.7 + len * 0.18) + 0.2 + (k - 1) * 0.24 });
       }
     }
 
-    push("hold", plan.origin, plan.origin, 0.5, rot, flip);   // +0.5s sau khi ô xa nhất xong
+    const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.9));   // ô xa nhất mất màu xong
+    push("hold", plan.origin, plan.origin, 0.5 + Math.max(0, lastEffectEnd - t), rot, flip);   // +0.5s sau đó
     let wp = plan.origin;
     for (const stepTo of plan.walks) {
       const dx = stepTo.x - wp.x;
@@ -183,7 +186,7 @@ function buildShow(cal: Calendar, seed: number): Show {
   pathLen += dist(vertices[vertices.length - 1], vertices[0]);
   pathD += " Z";
 
-  return { phases, total: t, pathD, pathLen, pulses };
+  return { phases, total: t, pathD, pathLen, burns };
 }
 
 // ============================================================
@@ -397,17 +400,35 @@ export function renderDragon(cal: Calendar, theme: Theme, opts: { showCount?: bo
   const show = buildShow(cal, seed);
   const parts: string[] = [];
 
-  // ===== bảng contribution =====
+  // ===== bảng contribution — ô bị rồng phun sẽ TỪ TỪ mất màu (gần trước, xa sau) =====
+  const burnMap = new Map<string, Burn>();
+  for (const b of show.burns) {
+    const key = `${b.col},${b.row}`;
+    if (!burnMap.has(key)) burnMap.set(key, b);   // lần đốt sớm nhất thắng
+  }
+  const FADE = 0.9;                                // mỗi ô mòn màu trong 0.9s
   for (let c = 0; c < cols; c++) {
     for (let r = 0; r < 7; r++) {
       const day = cal.weeks[c][r];
       const x = GEO.marginX + c * GEO.pitch;
       const y = GEO.top + r * GEO.pitch;
+      const burn = burnMap.get(`${c},${r}`);
+      const T = show.total;
+      const orig = day.level === 0 ? theme.empty : theme.levels[day.level - 1];
+      const iS = burn ? burn.t / T : 0;
+      const iE = burn ? Math.min(0.999, (burn.t + FADE) / T) : 0;
+
       if (day.level === 4) {
-        parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16"/>`);
+        const glowFade = burn
+          ? `<animate attributeName="opacity" values="0.16;0.16;0;0" keyTimes="0;${f(iS)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
+          : "";
+        parts.push(`<rect x="${x - 2.5}" y="${y - 2.5}" width="${GEO.cell + 5}" height="${GEO.cell + 5}" rx="4.5" fill="${theme.glow}" opacity="0.16">${glowFade}</rect>`);
       }
+      const fillAnim = burn && day.level > 0
+        ? `<animate attributeName="fill" values="${orig};${orig};${theme.empty};${theme.empty}" keyTimes="0;${f(iS)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
+        : "";
       parts.push(
-        `<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${day.level === 0 ? theme.empty : theme.levels[day.level - 1]}"/>`
+        `<rect x="${x}" y="${y}" width="${GEO.cell}" height="${GEO.cell}" rx="2" fill="${orig}">${fillAnim}</rect>`
       );
     }
     const first = cal.weeks[c][0]?.date ?? "";
@@ -420,17 +441,17 @@ export function renderDragon(cal: Calendar, theme: Theme, opts: { showCount?: bo
     parts.push(`<text x="${width - GEO.marginX}" y="${GEO.top - 9}" text-anchor="end" font-family="${FONT}" font-size="10" fill="${theme.label}">${total} contributions — last year</text>`);
   }
 
-  // ===== hiệu ứng "bay màu" trên các ô ăn lửa (bake vào keyTimes từng ô) =====
+  // ===== vòng ignition trắng ngắn khi lửa chạm ô (đánh dấu khoảnh khắc cháy) =====
   const T = show.total;
-  for (const pulse of show.pulses) {
-    const start = ((pulse.t % T) + T) % T;
+  for (const b of show.burns) {
+    const start = ((b.t % T) + T) % T;
     const a = f(start / T);
-    const b2 = f(Math.min(0.999, (start + 0.08) / T));
-    const c2 = f(Math.min(0.999, (start + 0.42) / T));
+    const b2 = f(Math.min(0.999, (start + 0.07) / T));
+    const c2 = f(Math.min(0.999, (start + 0.3) / T));
     parts.push(
-      `<circle cx="${f(pulse.x)}" cy="${f(pulse.y)}" r="5" fill="none" stroke="${DRAGON.glow}" stroke-width="2" opacity="0">` +
-      `<animate attributeName="opacity" values="0;0;0.9;0;0" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/>` +
-      `<animate attributeName="r" values="4;4;10;13;4" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/></circle>`
+      `<circle cx="${f(b.x)}" cy="${f(b.y)}" r="5" fill="none" stroke="${DRAGON.glow}" stroke-width="2" opacity="0">` +
+      `<animate attributeName="opacity" values="0;0;0.85;0;0" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/>` +
+      `<animate attributeName="r" values="4;4;9;12;4" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/></circle>`
     );
   }
 
