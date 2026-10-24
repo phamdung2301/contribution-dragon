@@ -103,8 +103,17 @@ function buildShow(cal, seed) {
                 vertices.push(to);
         }
     };
+    let spinAngle = 0;
     plans.forEach((plan, si) => {
-        push("fadein", plan.arrival, plan.arrival, 0.35, rot, flip);
+        // grand entrance: ~55% lần hiện ra có xoay tròn 360° (hướng ngẫu nhiên)
+        const doSpin = rnd() < 0.55;
+        const spinDur = doSpin ? 0.85 : 0.35;
+        const spinStart = spinAngle;
+        if (doSpin)
+            spinAngle += 360 * (rnd() < 0.5 ? 1 : -1);
+        phases.push({ t0: t, t1: t + spinDur, from: plan.arrival, to: plan.arrival, kind: "fadein", visible: true,
+            rotEnd: rot, flipEnd: flip, spinEnd: spinAngle, spinning: doSpin });
+        t += spinDur;
         push("move", plan.arrival, plan.origin, Math.max(0.8, dist(plan.arrival, plan.origin) / 110), rot, flip);
         for (const { d, len, rot: rEnd, flip: fEnd } of plan.dirs) {
             push("rotate", plan.origin, plan.origin, 0.14, rEnd, fEnd);
@@ -241,6 +250,8 @@ function dragonRiders(show) {
         flameKnots.push({ t: ph.t1, v: 1 });
     }
     const FLAME = `<animateTransform attributeName="transform" type="scale" ${emitChannel(flameKnots, total, v => `${f(v)} 1`)} dur="${f(total)}s" repeatCount="indefinite"/>`;
+    // spin-in — xoay tròn 360° khi biến tới (grand entrance)
+    const SPIN = `<animateTransform attributeName="transform" type="rotate" ${emitChannel(bounds.map(b => ({ t: b, v: f(scalarSpinAt(show.phases, b)) })), total, v => String(f(v)))} dur="${f(total)}s" repeatCount="indefinite"/>`;
     // rider chính — keyframes lấy tại ranh giới phase
     const kts = [], kps = [];
     const seen = new Set();
@@ -328,7 +339,21 @@ function dragonRiders(show) {
     </g>
   </g>`;
     // một rider duy nhất mang cả con rồng
-    return `<g><animateMotion dur="${f(total)}s" repeatCount="indefinite" path="${show.pathD}" keyPoints="${sortedPairs.map(p => f(p.kp)).join(";")}" keyTimes="${sortedPairs.map(p => f(p.kt)).join(";")}" calcMode="linear"/><g transform="scale(${DRAGON.scale})">${OPACITY}<g>${ROT}<g>${FLIP}${body}${head}</g></g></g></g>`;
+    return `<g><animateMotion dur="${f(total)}s" repeatCount="indefinite" path="${show.pathD}" keyPoints="${sortedPairs.map(p => f(p.kp)).join(";")}" keyTimes="${sortedPairs.map(p => f(p.kt)).join(";")}" calcMode="linear"/><g transform="scale(${DRAGON.scale})">${OPACITY}<g>${ROT}<g>${SPIN}<g>${FLIP}${body}${head}</g></g></g></g></g>`;
+}
+function scalarSpinAt(phases, t) {
+    const T = phases[phases.length - 1].t1;
+    const tt = ((t % T) + T) % T;
+    for (let i = 0; i < phases.length; i++) {
+        const ph = phases[i];
+        if (tt >= ph.t0 && tt <= ph.t1) {
+            const prev = phases[(i - 1 + phases.length) % phases.length].spinEnd ?? 0;
+            const end = ph.spinEnd ?? prev;
+            const k = (tt - ph.t0) / Math.max(0.0001, ph.t1 - ph.t0);
+            return ph.spinning ? prev + (end - prev) * k : end;
+        }
+    }
+    return 0;
 }
 function scalarRotAt(phases, t) {
     const T = phases[phases.length - 1].t1;
