@@ -45,10 +45,12 @@ tail is simulated against it:
 ```
 FADE-IN          arrive outside the grid boundary (55%: + 360° spin-in)
 ENTER            cross the boundary at the nearest edge cell
-SWEEP            glide a serpentine of 20–30 steps from the entry edge
-                 deep to the spray origin (wave bends every few hops;
-                 amplitude widens to 2 cells when the span is short so
-                 the head never wiggles in place)
+SWEEP            glide a serpentine of 20–30 steps from a SIDE edge to
+                 the spray origin — movement is Ox-preferred: arrivals
+                 sit outside the left/right borders, sweeps and wanders
+                 run mostly horizontal (~75% of path length); wave bends
+                 every few hops, amplitude widens to 2 cells on short
+                 spans so the head never wiggles in place
 AIM + SPRAY      rotate 0.14 s → breathe fire 1.12–1.56 s → repeat 1–4×
                  (fire path = every cell in range; bright cells start a
                  sequential color-loss wave, nearest first)

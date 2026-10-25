@@ -1,7 +1,7 @@
 import { cellCenter, GEO, gridSize, MONTHS } from "./route.js";
 const FONT = "ui-monospace,SFMono-Regular,'JetBrains Mono',Consolas,monospace";
 const DRAGON = {
-    scale: 1.22,
+    scale: 1.1,
     body: "#0B3B33",
     shade: "#062E26",
     line: "#00F5D4",
@@ -86,21 +86,19 @@ export function buildFlightPlan(cal, seed) {
         };
         const d0 = dirs8.find(coneFits) ?? dirs8.find(d => inGrid({ x: target.x - d.x * GEO.pitch, y: target.y - d.y * GEO.pitch })) ?? dirs8[0];
         const origin = { x: target.x - d0.x * GEO.pitch, y: target.y - d0.y * GEO.pitch };
-        // ---- arrival: NGOÀI boundary 1.4 ô theo hướng tâm → origin ----
-        const ox = origin.x - center.x, oy = origin.y - center.y;
-        const ol = Math.max(1, Math.hypot(ox, oy));
-        const arrival = { x: origin.x + (ox / ol) * GEO.pitch * 1.4, y: origin.y + (oy / ol) * GEO.pitch * 1.4 };
-        // ---- entry: ô biên gần arrival nhất ----
-        const entryC = Math.max(0, Math.min(cols - 1, Math.round((arrival.x - GEO.marginX - GEO.cell / 2) / GEO.pitch)));
-        const entryR = Math.max(0, Math.min(6, Math.round((arrival.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
+        // ---- arrival + entry: fade-in NGOÀI biên TRÁI/PHẢI rồi quét ngang tới origin (ưu tiên Ox) ----
+        const side = origin.x < center.x ? -1 : 1;
+        const entryC = side < 0 ? 0 : cols - 1;
+        const entryR = Math.max(0, Math.min(6, Math.round((origin.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
         const entry = cellCenter(entryC, entryR);
+        const arrival = { x: entry.x + side * GEO.pitch * 1.4, y: entry.y };
         // ---- GLIDE: serpentine 20–30 bước từ entry đến origin (user spec 2026-10-25) ----
         const want = 20 + Math.floor(rnd() * 11); // 20–30 bước
         const glide = [];
         const originC = Math.max(0, Math.min(cols - 1, Math.round((origin.x - GEO.marginX - GEO.cell / 2) / GEO.pitch)));
         const originR = Math.max(0, Math.min(6, Math.round((origin.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
         const dc = originC - entryC, dr = originR - entryR;
-        const majorIsCol = Math.abs(dc) >= Math.abs(dr);
+        const majorIsCol = Math.abs(dc) * 1.35 >= Math.abs(dr); // ưu tiên tiến theo trục Ox
         const span = Math.abs(majorIsCol ? dc : dr);
         // quãng ngắn + nhiều bước → biên độ lượn 2 ô cho khỏi lắc tại chỗ
         const amp = span < want * 0.5 ? 2 : 1;
@@ -128,7 +126,7 @@ export function buildFlightPlan(cal, seed) {
         let wp = { ...origin };
         const nSteps = 4 + Math.floor(rnd() * 4);
         for (let i = 0; i < nSteps; i++) {
-            const ang = rnd() * Math.PI * 2;
+            const ang = (rnd() < 0.5 ? 0 : Math.PI) + (rnd() - 0.5) * 0.9; // lang thang thiên về ngang (±26°)
             const step = GEO.pitch * (0.8 + rnd() * 1.6);
             wp = {
                 x: Math.min(width - GEO.marginX + GEO.pitch * 0.6, Math.max(GEO.marginX - GEO.pitch * 0.6, wp.x + Math.cos(ang) * step)),
@@ -407,53 +405,52 @@ function dragonRiders(plan) {
     };
     const segs = [];
     // thân: 12 đốt — node xoay theo tiếp tuyến (+90 cho gai), 2 lớp silhouette
-    const radii = [11, 10.6, 10.2, 9.7, 9.2, 8.6, 8, 7.4, 6.8, 6.2, 5.6, 5];
+    const radii = [10, 9.6, 9.2, 8.7, 8.1, 7.5, 6.9, 6.3, 5.7, 5.2, 4.7, 4.3];
     for (let k = radii.length; k >= 1; k--) {
         const r = radii[k - 1];
-        segs.push(nodeRider(k, 90, `<circle r="${r + 1.2}" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.5"/><circle r="${r}" fill="${DRAGON.body}"/>`));
+        segs.push(nodeRider(k, 90, `<circle r="${r + 1.1}" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.4"/><circle r="${r}" fill="${DRAGON.body}"/>`));
     }
     for (let k = radii.length; k >= 1; k--) {
         const r = radii[k - 1];
-        const spike = k <= 7
-            ? `<polygon points="0,${-r + 1} 3.4,${-r - 5.5} -3.4,${-r - 5.5}" fill="${DRAGON.spike}" opacity="0.95"/>`
+        const spike = k <= 6
+            ? `<polygon points="0,${-r + 1} 2.8,${-r - 4.6} -2.8,${-r - 4.6}" fill="${DRAGON.spike}" opacity="0.95"/>`
             : "";
         segs.push(nodeRider(k, 90, `${spike}<circle r="${r}" fill="${k % 2 === 0 ? DRAGON.body : DRAGON.shade}"/>`));
     }
     // cánh trên đốt 3
-    segs.push(nodeRider(3, 0, `<g opacity="0.5"><path d="M2 -8 C -10 -24 -27 -30 -35 -24 C -27 -19 -17 -13 -5 -7 Z" fill="${DRAGON.shade}">` +
+    segs.push(nodeRider(3, 0, `<g opacity="0.5"><path d="M1 -7 C -8 -18 -20 -23 -27 -18 C -20 -14 -12 -9.5 -4 -6 Z" fill="${DRAGON.shade}">` +
         `<animateTransform attributeName="transform" type="rotate" values="-13 0 -5;13 0 -5;-13 0 -5" dur="0.72s" repeatCount="indefinite"/></path></g>` +
-        `<path d="M0 -7 C -11 -20 -25 -24 -31 -18 C -23 -13 -13 -9 -4 -5 Z" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.4">` +
+        `<path d="M0 -6 C -8 -15 -18 -18 -23 -13.5 C -17 -10.5 -10 -7.5 -3 -4.5 Z" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.4">` +
         `<animateTransform attributeName="transform" type="rotate" values="11 0 -5;-15 0 -5;11 0 -5" dur="0.72s" repeatCount="indefinite"/></path>`));
     // đuôi: spade hướng ngược (+180)
-    segs.push(nodeRider(BODY_NODES + 1, 180, `<polygon points="-3,-5 -12,-8 -8,0 -12,8 -3,5" fill="${DRAGON.spike}" opacity="0.95"/>` +
-        `<polygon points="-2,-3 -8,-4.5 -5,0 -8,4.5 -2,3" fill="${DRAGON.glow}" opacity="0.8"/>`));
-    // ĐẦU — node 0: xoay theo vector heading, mũi + râu + lửa
+    segs.push(nodeRider(BODY_NODES + 1, 180, `<polygon points="-2.5,-4.5 -10,-7 -7,0 -10,7 -2.5,4.5" fill="${DRAGON.spike}" opacity="0.95"/>` +
+        `<polygon points="-1.8,-3 -7,-4.2 -4.5,0 -7,4.2 -1.8,3" fill="${DRAGON.glow}" opacity="0.8"/>`));
+    // ĐẦU — node 0: xoay theo vector heading, mũi + râu + lửa (bản compact)
     const head = `
-  <path d="M-4 -9 C -12 -17 -22 -18 -28 -12" stroke="${DRAGON.line}" stroke-width="2.4" fill="none" stroke-linecap="round"/>
-  <path d="M0 -10 C -6 -18 -14 -20 -20 -17" stroke="${DRAGON.line}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <path d="M-7 -7 C -12 -13 -18 -14 -23 -10" stroke="${DRAGON.line}" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <path d="M-3 -9 C -7 -14 -12 -16 -17 -14" stroke="${DRAGON.line}" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <ellipse cx="-3" cy="0" rx="13" ry="10.5" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.7"/>
+  <polygon points="6,-7 23,-3.5 23,3.5 6,7" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.7"/>
+  <polygon points="6,6 17,10 5,12.5" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.5"/>
+  <polygon points="9,7.6 11.5,9.6 9.8,10.4" fill="${DRAGON.glow}" opacity="0.9"/>
+  <polygon points="13,8.6 15.5,10.4 13.8,11" fill="${DRAGON.glow}" opacity="0.9"/>
+  <line x1="10" y1="1.8" x2="22" y2="0.8" stroke="${DRAGON.line}" stroke-width="1.4" stroke-linecap="round"/>
+  <circle cx="21" cy="-2.2" r="1.1" fill="${DRAGON.line}"/>
+  <circle cx="-6" cy="-3.2" r="2.9" fill="${DRAGON.glow}"/>
+  <circle cx="-5.2" cy="-3.9" r="1.05" fill="${DRAGON.line}"/>
   <g>
-    <animateTransform attributeName="transform" type="rotate" values="-5 24 0;6 24 0;-5 24 0" dur="2.4s" repeatCount="indefinite"/>
-    <path d="M26 -2 C 34 -8 44 -6 52 -12 C 56 -15 60 -14 63 -16" stroke="${DRAGON.line}" stroke-width="1.7" fill="none" stroke-linecap="round"/>
-    <path d="M27 3 C 35 7 43 5 50 10 C 54 13 58 12 62 14" stroke="${DRAGON.line}" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.8"/>
+    <animateTransform attributeName="transform" type="rotate" values="-5 20 0;6 20 0;-5 20 0" dur="2.4s" repeatCount="indefinite"/>
+    <path d="M22 -2 C 29 -6 36 -5 41 -9" stroke="${DRAGON.line}" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+    <path d="M22.5 2.5 C 29 5 35 4 40 7.5" stroke="${DRAGON.line}" stroke-width="1.2" fill="none" stroke-linecap="round" opacity="0.8"/>
   </g>
-  <path d="M-7 -7 L 3 -9" stroke="${DRAGON.line}" stroke-width="1.6" stroke-linecap="round"/>
-  <polygon points="5,5 20,9 7,14" fill="${DRAGON.shade}" stroke="${DRAGON.line}" stroke-width="1.6"/>
-  <polygon points="9,7 12,9.5 10,10" fill="${DRAGON.glow}" opacity="0.9"/>
-  <polygon points="14,8.2 17,10.5 15,11" fill="${DRAGON.glow}" opacity="0.9"/>
-  <polygon points="6,-8 24,-3 24,3 6,6" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.8"/>
-  <ellipse cx="-4" cy="0" rx="15" ry="11.5" fill="${DRAGON.body}" stroke="${DRAGON.line}" stroke-width="1.8"/>
-  <polygon points="10,0 22,1 22,2.5 10,3.5" fill="${DRAGON.line}"/>
-  <circle cx="20" cy="0" r="1" fill="${DRAGON.line}"/>
-  <circle cx="-2" cy="-4" r="3" fill="${DRAGON.glow}"/>
-  <circle cx="-1" cy="-4.9" r="1.05" fill="${DRAGON.line}"/>
   <g>
     ${FLAME}
     <g>
-      <animateTransform attributeName="transform" type="translate" values="28 2;31 2;28 2" dur="0.5s" repeatCount="indefinite"/>
-      <path d="M0 0 C 8 -2 14 -6 20 -5 C 15 -1 14 3 9 6 C 5 7 2 4 0 0 Z" fill="#F97316" opacity="0.95">
+      <animateTransform attributeName="transform" type="translate" values="25 0;28 0;25 0" dur="0.5s" repeatCount="indefinite"/>
+      <path d="M0 0 C 7 -2 12 -5 17 -4.5 C 13 -1 12 2.5 8 5 C 4 6 1.5 3 0 0 Z" fill="#F97316" opacity="0.95">
         <animate attributeName="opacity" values="0.95;0.55;0.95" dur="0.4s" repeatCount="indefinite"/>
       </path>
-      <path d="M0 0 C 6 -1 10 -3 14 -3 C 11 1 10 3 6 5 C 3 5 1 3 0 0 Z" fill="#FDE68A">
+      <path d="M0 0 C 5 -1 8.5 -2.5 12 -2.5 C 9.5 0.8 8.5 2.5 5 4.2 C 2.5 4.2 0.8 2.5 0 0 Z" fill="#FDE68A">
         <animate attributeName="opacity" values="1;0.5;1" dur="0.35s" repeatCount="indefinite"/>
       </path>
     </g>
