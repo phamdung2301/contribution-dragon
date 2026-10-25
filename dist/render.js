@@ -11,7 +11,9 @@ const DRAGON = {
 const SPACING = 7; // khoảng cách các node (px) < bán kính → thân liền
 const BODY_NODES = 12; // 12 đốt thân sau đầu
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-const f = (n) => Math.round(n * 1000) / 1000;
+const f = (n) => Math.round(n * 1e5) / 1e5; // 5 chữ số lẻ: chu kỳ dài cần knot thời gian mịn hơn 0.001
+const f4 = (n) => Math.round(n * 1e4) / 1e4; // keyPoints — 0.0001 × pathLen ≈ 0.3px là đủ
+const fa = (n) => Math.round(n * 10) / 10; // góc xoay — 0.1° là đủ, tiết kiệm bytes
 const lerpPt = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
 function mulberry32(seed) {
     return () => {
@@ -63,13 +65,23 @@ export function buildFlightPlan(cal, seed) {
                 any_.push({ p: cellCenter(c, r), count: 1 });
         return any_;
     })();
-    const SESSIONS = 3;
     const sessions = [];
     let cur = center;
-    for (let s = 0; s < SESSIONS; s++) {
-        // ---- mục tiêu: ô sáng ngẫu nhiên cách vị trí hiện tại ≥ 3 ô ----
-        const pool = shuffle(pool0.filter(b => dist(b.p, cur) > GEO.pitch * 3), rnd).slice(0, 10);
-        const target = (pool[0] ?? pool0[s % pool0.length]).p;
+    // mỗi session nhắm ô sáng CHƯA cháy — vòng chỉ dừng khi MỌI đốm sáng của
+    // repo này đã được đốt (độ dài chu kỳ phụ thuộc dữ liệu), cap 24 session
+    const burned = new Set();
+    const colOf = (x) => Math.round((x - GEO.marginX - GEO.cell / 2) / GEO.pitch);
+    const rowOf = (y) => Math.round((y - GEO.top - GEO.cell / 2) / GEO.pitch);
+    for (let s = 0; s < 40; s++) {
+        const remaining = pool0.filter(b => !burned.has(`${colOf(b.p.x)},${rowOf(b.p.y)}`));
+        if (bright.length >= 4 ? remaining.length === 0 : s >= 3)
+            break;
+        // ---- mục tiêu: TÂM CỤM ô sáng chưa cháy (nhiều hàng xóm chưa cháy nhất trong
+        // bán kính ~3 ô) để mỗi loạt phun quét trọn chùm — ưu tiên cách vị trí hiện tại ≥ 3 ô ----
+        const clusterScore = (p) => remaining.reduce((n, b) => n + (dist(b.p, p) <= GEO.pitch * 3.2 ? 1 : 0), 0);
+        const sorted = [...remaining].sort((a, b) => clusterScore(b.p) - clusterScore(a.p) || b.count - a.count);
+        const pool = shuffle(sorted.slice(0, 10).filter(b => dist(b.p, cur) > GEO.pitch * 3), rnd);
+        const target = (pool[0] ?? sorted[0] ?? pool0[s % pool0.length]).p;
         // ---- hướng phun: 8 hướng (4 chính + 4 chéo — theo MIỆNG rồng) ----
         // origin VÀ toàn tầm lửa 1–3 ô phải nằm trong bảng, chạm boundary → bỏ hướng
         const dirs8 = shuffle([
@@ -121,10 +133,10 @@ export function buildFlightPlan(cal, seed) {
             }
         }
         glide[glide.length - 1] = { ...origin }; // điểm cuối = đúng origin
-        // ---- walk: 4–7 bước ngẫu nhiên (lùm ngoài boundary 1 ô) ----
+        // ---- walk: 2–3 bước ngang thiên (nhiều session → giữ chu kỳ phủ-đốt gọn) ----
         const walks = [];
         let wp = { ...origin };
-        const nSteps = 4 + Math.floor(rnd() * 4);
+        const nSteps = 2 + Math.floor(rnd() * 2);
         for (let i = 0; i < nSteps; i++) {
             const ang = (rnd() < 0.5 ? 0 : Math.PI) + (rnd() - 0.5) * 0.9; // lang thang thiên về ngang (±26°)
             const step = GEO.pitch * (0.8 + rnd() * 1.6);
@@ -135,10 +147,37 @@ export function buildFlightPlan(cal, seed) {
             walks.push(wp);
         }
         const sprayDirs = (() => {
-            const order = [d0, ...shuffle(dirs8.filter(d => d !== d0), rnd)];
-            const dirCount = 1 + Math.floor(rnd() * 4);
-            return order.slice(0, dirCount).map(d => ({ d, len: 1 + Math.floor(rnd() * 3), aim: angleDeg(d) }));
+            // xếp hạng hướng theo TIA PHUN: hướng có ô sáng chưa cháy trên tia đứng trước,
+            // và tầm lửa len bám theo ô sáng xa nhất trên tia đó (min 2) — không phun lãng vào ô rỗng
+            const rayInfo = (d) => {
+                let far = 0;
+                for (let k = 1; k <= 3; k++) {
+                    const q = { x: origin.x + d.x * GEO.pitch * k, y: origin.y + d.y * GEO.pitch * k };
+                    if (!inGrid(q))
+                        break;
+                    if (!burned.has(`${colOf(q.x)},${rowOf(q.y)}`) && (cal.weeks[colOf(q.x)]?.[rowOf(q.y)]?.level ?? 0) >= 2)
+                        far = k;
+                }
+                return far;
+            };
+            const fitting = dirs8.filter(coneFits)
+                .map(d => ({ d, far: rayInfo(d) }))
+                .sort((a, b) => (b.far > 0 ? 1 : 0) - (a.far > 0 ? 1 : 0) || b.far - a.far);
+            const order = [d0, ...fitting.filter(x => x.d !== d0).map(x => x.d)];
+            const dirCount = 3 + Math.floor(rnd() * 3); // 3–5 hướng
+            return order.slice(0, dirCount).map(d => {
+                const far = fitting.find(x => x.d === d)?.far ?? 0;
+                return { d, len: Math.max(2, far), aim: angleDeg(d) };
+            });
         })();
+        // đánh dấu trước các ô session này sẽ đốt để session sau không nhắm lại
+        for (const { d, len } of sprayDirs) {
+            for (let k = 1; k <= len; k++) {
+                const q = { x: origin.x + d.x * GEO.pitch * k, y: origin.y + d.y * GEO.pitch * k };
+                if (inGrid(q) && cal.weeks[colOf(q.x)]?.[rowOf(q.y)])
+                    burned.add(`${colOf(q.x)},${rowOf(q.y)}`);
+            }
+        }
         sessions.push({ entry, glide, origin, arrival, sprayDirs, walks });
         cur = walks[walks.length - 1] ?? origin;
     }
@@ -195,15 +234,15 @@ export function buildFlightPlan(cal, seed) {
             }
             t += 0.9 + len * 0.22;
         }
-        // HOLD 1.2s sau khi ô xa nhất xong hiệu ứng
+        // HOLD sau khi ô xa nhất xong hiệu ứng (nhiều session → hold gọn lại)
         const lastEffectEnd = Math.max(t, ...burns.map(b => b.t + 0.9));
-        const holdDur = 1.2 + Math.max(0, lastEffectEnd - t);
+        const holdDur = 0.8 + Math.max(0, lastEffectEnd - t);
         phases.push({ t0: t, t1: t + holdDur, from: plan.origin, to: plan.origin, kind: "hold", visible: true, aim, rotEnd: aim });
         t += holdDur;
         // WANDER 4–7 bước
         let wprev = plan.origin;
         for (const stepTo of plan.walks) {
-            pushMove("walk", wprev, stepTo, 0.65);
+            pushMove("walk", wprev, stepTo, 0.55);
             wprev = stepTo;
         }
         // FADE-OUT + SLIDE sang session kế
@@ -300,7 +339,15 @@ function aimAt(plan, t) {
 // SMIL assembly
 // ============================================================
 function linEmit(kts, vals, fmt) {
-    return `values="${vals.map(v => fmt(v)).join(";")}" keyTimes="${kts.map(k => f(k)).join(";")}"`;
+    const oK = [], oV = [];
+    for (let i = 0; i < kts.length; i++) {
+        const w = f(kts[i]);
+        if (w > (oK[oK.length - 1] ?? -Infinity)) {
+            oK.push(w);
+            oV.push(fmt(vals[i]));
+        }
+    }
+    return `values="${oV.join(";")}" keyTimes="${oK.join(";")}"`;
 }
 function emitChannel(knots, total, fmt) {
     const T = total;
@@ -309,7 +356,7 @@ function emitChannel(knots, total, fmt) {
     const pts = [];
     for (const k of sorted) {
         const lt = (((k.t % T) + T) % T) / T;
-        const key = lt.toFixed(4);
+        const key = String(f(lt)); // dedupe theo giá trị ĐÃ LÀM TRÒN sẽ phát ra
         if (seen.has(key))
             continue;
         seen.add(key);
@@ -319,7 +366,13 @@ function emitChannel(knots, total, fmt) {
         pts.unshift({ kt: 0, v: pts[pts.length - 1].v });
     if (pts[pts.length - 1].kt < 0.9999)
         pts.push({ kt: 1, v: pts[0].v });
-    return `values="${pts.map(p => fmt(p.v)).join(";")}" keyTimes="${pts.map(p => f(p.kt)).join(";")}"`;
+    const oV = [], oK = []; // lọc đơn điệu sau làm tròn — browser drop animate nếu trùng
+    for (const p of pts)
+        if (p.kt > (oK[oK.length - 1] ?? -Infinity)) {
+            oK.push(p.kt);
+            oV.push(fmt(p.v));
+        }
+    return `values="${oV.join(";")}" keyTimes="${oK.join(";")}"`;
 }
 function opacityAt(phases, t) {
     const T = phases[phases.length - 1].t1;
@@ -356,7 +409,8 @@ function spinAt(phases, t) {
 }
 function dragonRiders(plan) {
     const total = plan.total;
-    const bounds = [0, ...plan.phases.map(p => p.t1)];
+    // opacity chỉ đổi tại biên fade — đừng phát knot cho mọi biên phase (chu kỳ dài sẽ phình file)
+    const bounds = [0, ...plan.phases.filter(p => p.kind === "fadein" || p.kind === "fadeout" || p.kind === "slide").flatMap(p => [p.t0, p.t1])];
     const T = total;
     const OPACITY = `<animate attributeName="opacity" ${linEmit(bounds.map(b => b / T), bounds.map(b => f(opacityAt(plan.phases, b))), v => String(f(v)))} dur="${f(T)}s" repeatCount="indefinite"/>`;
     // đuôi lửa — dài theo len của từng pha spray
@@ -375,9 +429,14 @@ function dragonRiders(plan) {
     const nodeRider = (node, baseAngle, content) => {
         const kts = [], kps = [], oKts = [], oVals = [];
         const raw = [];
-        const steps = Math.ceil(T / 0.25);
+        const step = T > 300 ? 0.75 : T > 180 ? 0.6 : T > 90 ? 0.45 : 0.25; // chu kỳ dài → thưa mẫu cho khỏi phình file
+        const steps = Math.ceil(T / step);
         for (let i = 0; i <= steps; i++)
             raw.push((i / steps) * T);
+        // knot tại biên các pha ĐỨNG/YẾU hướng (stall/turn không trôi); pha move/walk đều tốc độ thì mẫu đều đủ
+        for (const ph of plan.phases)
+            if (ph.kind !== "move" && ph.kind !== "walk")
+                raw.push(ph.t0);
         for (const ph of plan.phases) {
             if (ph.kind !== "fadein" || !ph.spinning)
                 continue;
@@ -392,11 +451,11 @@ function dragonRiders(plan) {
                 continue; // chặn keyTime trùng sau làm tròn
             lastKt = kt;
             kts.push(kt);
-            kps.push(f(Math.max(0, Math.min(1, (arcAt(plan, t) - node * SPACING) / plan.pathLen))));
+            kps.push(f4(Math.max(0, Math.min(1, (arcAt(plan, t) - node * SPACING) / plan.pathLen))));
             const base = node === 0
                 ? aimAt(plan, t) // đầu: xoay theo aim/heading
                 : unwrapAngle(oVals[oVals.length - 1] ?? 0, nodeHeading(plan, node, t) + baseAngle);
-            oVals.push(f(base + spinAt(plan.phases, t)));
+            oVals.push(fa(base + spinAt(plan.phases, t)));
             oKts.push(kt);
         }
         const rot = `<animateTransform attributeName="transform" type="rotate" values="${oVals.join(";")}" keyTimes="${oKts.join(";")}" dur="${f(T)}s" repeatCount="indefinite"/>`;
@@ -484,9 +543,15 @@ function renderBoard(plan, cal, theme) {
             const orig = day.level === 0 ? theme.empty : theme.levels[day.level - 1];
             // INTACT → (t) lửa bốc cháy 0.5s (giữ màu) → chớp trắng → mòn về SCORCHED 0.4s
             const iS = burn ? burn.t / T : 0;
-            const iM = burn ? Math.min(0.999, (burn.t + 0.5) / T) : 0;
-            const iF = burn ? Math.min(0.999, (burn.t + 0.62) / T) : 0;
-            const iE = burn ? Math.min(0.999, (burn.t + 1.02) / T) : 0;
+            let iM = burn ? Math.min(0.999, (burn.t + 0.5) / T) : 0;
+            let iF = burn ? Math.min(0.999, (burn.t + 0.62) / T) : 0;
+            let iE = burn ? Math.min(0.999, (burn.t + 1.02) / T) : 0;
+            if (iM <= iS)
+                iM = Math.min(0.999, iS + 0.00002); // chu kỳ dài: khoảng cách knot sau làm tròn có thể = 0
+            if (iF <= iM)
+                iF = Math.min(0.999, iM + 0.00002);
+            if (iE <= iF)
+                iE = Math.min(0.999, iF + 0.00002);
             if (day.level === 4) {
                 const glowFade = burn
                     ? `<animate attributeName="opacity" values="0.16;0.16;0.1;0;0" keyTimes="0;${f(iS)};${f(iM)};${f(iE)};1" dur="${f(T)}s" repeatCount="indefinite"/>`
@@ -512,10 +577,13 @@ function renderBoard(plan, cal, theme) {
         const kts = [0];
         const ops = [0];
         const scs = ["0.4 0.4"];
-        const steps = 6;
+        const steps = 4;
         for (let i = 0; i <= steps; i++) {
             const tt = start + (i / steps) * 0.5;
-            kts.push(f(Math.min(0.999, tt / T)));
+            const kt = f(Math.min(0.999, tt / T));
+            if (kt <= kts[kts.length - 1])
+                continue; // chống knot trùng sau làm tròn (chu kỳ dài)
+            kts.push(kt);
             ops.push(f(i === 0 ? 0.5 : (i % 2 === 1 ? 1 : 0.65)));
             const sc = 0.8 + (i / steps) * 1.3 + (i % 2 === 1 ? 0.15 : 0);
             scs.push(`${f(sc)} ${f(sc)}`);
@@ -532,8 +600,8 @@ function renderBoard(plan, cal, theme) {
             `</g></g>`);
         // vòng ignition trắng
         const a = f(start / T);
-        const b2 = f(Math.min(0.999, (start + 0.07) / T));
-        const c2 = f(Math.min(0.999, (start + 0.3) / T));
+        const b2 = f(Math.min(0.999, Math.max((start + 0.07) / T, a + 0.00002)));
+        const c2 = f(Math.min(0.999, Math.max((start + 0.3) / T, b2 + 0.00002)));
         parts.push(`<circle cx="${f(b.x)}" cy="${f(b.y)}" r="5" fill="none" stroke="${DRAGON.glow}" stroke-width="2" opacity="0">` +
             `<animate attributeName="opacity" values="0;0;0.85;0;0" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/>` +
             `<animate attributeName="r" values="4;4;9;12;4" keyTimes="0;${a};${b2};${c2};1" dur="${f(T)}s" repeatCount="indefinite"/></circle>`);

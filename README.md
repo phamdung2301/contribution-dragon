@@ -10,11 +10,14 @@
 
 ## Features
 
-- **Hunting choreography** — the dragon does not crawl a fixed path. Each
-  cycle it performs **3 hunting sessions**: fade-in outside the grid →
-  sweep **20–30 serpentine steps** across the board → rotate and breathe
-  fire on bright cells → wander on foot → vanish and teleport to the next
-  hunting ground.
+- **Hunting choreography — burns EVERYTHING before reset** — the dragon
+  hunts session after session: fade-in outside a side edge → sweep
+  **20–30 serpentine steps** → breathe fire → wander → teleport on.
+  Each session targets the densest cluster of UNBURNED bright cells and
+  aims every blast ray at still-lit dots, so the loop only ends when
+  **every bright cell of this repo's graph has burned** — then the board
+  resets. Cycle length adapts to the repo's activity (capped at 40
+  sessions).
 - **Rotating flamethrower** — at each hunting ground the dragon turns
   through a **random 1–4 directions**, each blast covering a **random
   1–3 cell range**. Directions whose whole flame cone would leave the grid
@@ -51,7 +54,9 @@ SWEEP            glide a serpentine of 20–30 steps from a SIDE edge to
                  run mostly horizontal (~75% of path length); wave bends
                  every few hops, amplitude widens to 2 cells on short
                  spans so the head never wiggles in place
-AIM + SPRAY      rotate 0.14 s → breathe fire 1.12–1.56 s → repeat 1–4×
+AIM + SPRAY      rotate 0.14 s → breathe fire 1.34–1.56 s → 3–5 rays
+                 aimed at still-burning dots (range locked onto the
+                 farthest lit cell on each ray)
                  (fire path = every cell in range; bright cells start a
                  sequential color-loss wave, nearest first)
 HOLD             0.5 s + (farthest cell's fade completion) — the body

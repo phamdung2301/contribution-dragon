@@ -68,6 +68,13 @@ ok(sprays.length >= 3, `sprays=${sprays.length} quá ít`);
 // 5) fadein spin: mỗi session có quá khứ spin thì spinEnd là bội 360
 for (const ph of plan.phases) if (ph.kind === "fadein" && ph.spinning) ok(Math.abs(ph.spinEnd % 360) < 1e-6, `spinEnd=${ph.spinEnd} không bội 360`);
 
+// 6) COVERAGE: mọi ô sáng level>=2 phải được đốt trước khi chu kỳ loop lại
+const brightCells = new Set();
+for (let c = 0; c < cols; c++) for (let r = 0; r < 7; r++) if ((cal.weeks[c]?.[r]?.level ?? 0) >= 2) brightCells.add(`${c},${r}`);
+const burnedSet = new Set(plan.burns.map(b => `${b.col},${b.row}`));
+const missed = [...brightCells].filter(k => !burnedSet.has(k));
+ok(missed.length === 0, `bright cells chưa đốt: ${missed.slice(0, 8).join(" ")}${missed.length > 8 ? " …" : ""} (tổng ${missed.length}/${brightCells.size})`);
+
 // ---- debug frames (đầu + chuỗi arc-offset) ----
 mkdirSync("debug", { recursive: true });
 const colors = ["#FF2222", "#FF7F00", "#FFE700", "#22FF22", "#22FFFF", "#4488FF", "#8844FF", "#FF44FF", "#FFFFFF", "#88FF88", "#FF8888", "#F0F0F0", "#FFC0CB"];
@@ -110,4 +117,4 @@ for (let tt = 0.5; tt < plan.total; tt += 1.2) {
 }
 
 if (fails.length) { console.error("FAIL:\n" + fails.join("\n")); process.exit(1); }
-console.log(`PASS | riders=${riders} | phases=${plan.phases.length} | burns=${plan.burns.length} | sprays=${sprays.length} | frames=${frame} | total=${plan.total.toFixed(1)}s | arc==path ✓`);
+console.log(`PASS | riders=${riders} | phases=${plan.phases.length} | burns=${plan.burns.length}/${brightCells.size} bright cells covered | sprays=${sprays.length} | frames=${frame} | total=${plan.total.toFixed(1)}s | arc==path ✓`);
