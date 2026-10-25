@@ -133,25 +133,29 @@ export function buildFlightPlan(cal: Calendar, seed: number): FlightPlan {
     const entryR = Math.max(0, Math.min(6, Math.round((arrival.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
     const entry = cellCenter(entryC, entryR);
 
-    // ---- GLIDE: quét serpentine 11–14 ô từ entry ĐI SÂU vào bảng, kết thúc tại origin ----
-    const want = 11 + Math.floor(rnd() * 4);   // 11–14 điểm glide
+    // ---- GLIDE: serpentine 20–30 bước từ entry đến origin (user spec 2026-10-25) ----
+    const want = 20 + Math.floor(rnd() * 11);  // 20–30 bước
     const glide: Pt[] = [];
     const originC = Math.max(0, Math.min(cols - 1, Math.round((origin.x - GEO.marginX - GEO.cell / 2) / GEO.pitch)));
     const originR = Math.max(0, Math.min(6, Math.round((origin.y - GEO.top - GEO.cell / 2) / GEO.pitch)));
     const dc = originC - entryC, dr = originR - entryR;
     const majorIsCol = Math.abs(dc) >= Math.abs(dr);
-    let flipWob = rnd() < 0.5 ? 1 : -1;
+    const span = Math.abs(majorIsCol ? dc : dr);
+    // quãng ngắn + nhiều bước → biên độ lượn 2 ô cho khỏi lắc tại chỗ
+    const amp = span < want * 0.5 ? 2 : 1;
+    const halfPeriod = Math.max(2, Math.round(want / (amp * 5)));
+    let wob = rnd() < 0.5 ? 1 : -1;
     for (let i = 0; i < want; i++) {
       const k = i / (want - 1);
+      if (i > 0 && i % halfPeriod === 0) wob = -wob;
+      const w = i === 0 || i === want - 1 ? 0 : wob * amp;
       if (majorIsCol) {
-        const gc = Math.round(entryC + dc * k);
-        if (i > 0 && i < want - 1 && i % 2 === 0) flipWob = -flipWob;
-        const gr = Math.max(0, Math.min(6, Math.round(entryR + dr * k) + (i % 2 === 0 ? 0 : flipWob)));
+        const gc = Math.max(0, Math.min(cols - 1, Math.round(entryC + dc * k)));
+        const gr = Math.max(0, Math.min(6, Math.round(entryR + dr * k) + w));
         glide.push(cellCenter(gc, gr));
       } else {
-        const gr = Math.round(entryR + dr * k);
-        if (i > 0 && i < want - 1 && i % 2 === 0) flipWob = -flipWob;
-        const gc = Math.max(0, Math.min(cols - 1, Math.round(entryC + dc * k) + (i % 2 === 0 ? 0 : flipWob)));
+        const gr = Math.max(0, Math.min(6, Math.round(entryR + dr * k)));
+        const gc = Math.max(0, Math.min(cols - 1, Math.round(entryC + dc * k) + w));
         glide.push(cellCenter(gc, gr));
       }
     }
@@ -213,7 +217,7 @@ export function buildFlightPlan(cal: Calendar, seed: number): FlightPlan {
     // GLIDE serpentine
     let prev = plan.entry;
     for (const g of plan.glide) {
-      pushMove("move", prev, g, 0.32);
+      pushMove("move", prev, g, 0.24);
       prev = g;
     }
 

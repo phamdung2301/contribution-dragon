@@ -12,8 +12,9 @@
 
 - **Hunting choreography** — the dragon does not crawl a fixed path. Each
   cycle it performs **3 hunting sessions**: fade-in outside the grid →
-  sweep 11–14 cells across the board → rotate and breathe fire on bright
-  cells → wander on foot → vanish and teleport to the next hunting ground.
+  sweep **20–30 serpentine steps** across the board → rotate and breathe
+  fire on bright cells → wander on foot → vanish and teleport to the next
+  hunting ground.
 - **Rotating flamethrower** — at each hunting ground the dragon turns
   through a **random 1–4 directions**, each blast covering a **random
   1–3 cell range**. Directions whose whole flame cone would leave the grid
@@ -44,10 +45,11 @@ tail is simulated against it:
 ```
 FADE-IN          arrive outside the grid boundary (55%: + 360° spin-in)
 ENTER            cross the boundary at the nearest edge cell
-SWEEP            glide an S-curve across 11–14 cells (two bézier legs:
-                 entry → away → spray origin; hops ≤ 1.3 cells so the
-                 dragon slides across cells instead of jumping)
-AIM + SPRAY      rotate 0.14 s → breathe fire 0.7–1.24 s → repeat 1–4×
+SWEEP            glide a serpentine of 20–30 steps from the entry edge
+                 deep to the spray origin (wave bends every few hops;
+                 amplitude widens to 2 cells when the span is short so
+                 the head never wiggles in place)
+AIM + SPRAY      rotate 0.14 s → breathe fire 1.12–1.56 s → repeat 1–4×
                  (fire path = every cell in range; bright cells start a
                  sequential color-loss wave, nearest first)
 HOLD             0.5 s + (farthest cell's fade completion) — the body
